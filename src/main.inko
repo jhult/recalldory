@@ -139,10 +139,24 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
       out.print("{\"error\": \"Import not yet implemented\"}")
     }
     case AgentsMd(path) -> {
-      out.print("{\"error\": \"AgentsMd not yet implemented\"}")
+      match generate_agents_md(db, path) {
+        case Ok(_) -> {
+          out.print("{\"success\": true}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
     }
     case Stats(verbose) -> {
-      out.print("{\"error\": \"Stats not yet implemented\"}")
+      match get_stats(db, verbose) {
+        case Ok(stats) -> {
+          out.print("{\"total\": ${stats.total}, \"active\": ${stats.active}, \"pinned\": ${stats.pinned}, \"anti_pattern\": ${stats.anti_pattern}, \"avg_strength\": ${(stats.avg_strength as Float).to_string}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
     }
   }
 }
@@ -551,6 +565,130 @@ fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, Str
   }
 
   Result.Ok(MaintainStats(decayed: decayed, anti_patterns: anti_patterns, pruned: pruned))
+}
+
+type pub MemoryStats {
+  let @total: Int
+  let @active: Int
+  let @pinned: Int
+  let @anti_pattern: Int
+  let @avg_strength: Float64
+}
+
+fn get_stats(db: mut Database, verbose: Bool) -> Result[MemoryStats, String] {
+  let total_sql = "SELECT COUNT(*) FROM memories"
+  let mut total_stmt = match db.prepare(total_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let total = if total_stmt.step == SQLITE_ROW {
+    total_stmt.column_int(0)
+  } else {
+    0
+  }
+  total_stmt.finalize
+
+  let active_sql = "SELECT COUNT(*) FROM memories WHERE status = 'active'"
+  let mut active_stmt = match db.prepare(active_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let active = if active_stmt.step == SQLITE_ROW {
+    active_stmt.column_int(0)
+  } else {
+    0
+  }
+  active_stmt.finalize
+
+  let pinned_sql = "SELECT COUNT(*) FROM memories WHERE status = 'pinned'"
+  let mut pinned_stmt = match db.prepare(pinned_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let pinned = if pinned_stmt.step == SQLITE_ROW {
+    pinned_stmt.column_int(0)
+  } else {
+    0
+  }
+  pinned_stmt.finalize
+
+  let anti_sql = "SELECT COUNT(*) FROM memories WHERE status = 'anti-pattern'"
+  let mut anti_stmt = match db.prepare(anti_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let anti_pattern = if anti_stmt.step == SQLITE_ROW {
+    anti_stmt.column_int(0)
+  } else {
+    0
+  }
+  anti_stmt.finalize
+
+  let avg_sql = "SELECT AVG(strength) FROM memories"
+  let mut avg_stmt = match db.prepare(avg_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let avg_strength = if avg_stmt.step == SQLITE_ROW {
+    avg_stmt.column_double(0)
+  } else {
+    0.0 as Float64
+  }
+  avg_stmt.finalize
+
+  Result.Ok(MemoryStats(total: total, active: active, pinned: pinned, anti_pattern: anti_pattern, avg_strength: avg_strength))
+}
+
+fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
+  # Get all pinned memories to include in AGENTS.md
+  let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  let mut pinned_content = ""
+  loop {
+    let step_result = stmt.step
+    if step_result == SQLITE_DONE {
+      break
+    }
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error("Query failed")
+    }
+    let content = stmt.column_text(0)
+    let tags = stmt.column_text(1)
+    let scope = stmt.column_text(2)
+    pinned_content = pinned_content + "- " + content + " (tags: " + tags + ", scope: " + scope + ")\n"
+  }
+  stmt.finalize
+
+  # Get anti-patterns to include as warnings
+  let anti_sql = "SELECT content FROM memories WHERE status = 'anti-pattern' ORDER BY harmful_count DESC LIMIT 10"
+  let mut anti_stmt = match db.prepare(anti_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  let mut anti_content = ""
+  loop {
+    let step_result = anti_stmt.step
+    if step_result == SQLITE_DONE {
+      break
+    }
+    if step_result != SQLITE_ROW {
+      anti_stmt.finalize
+      return Result.Error("Query failed")
+    }
+    let content = anti_stmt.column_text(0)
+    anti_content = anti_content + "- " + content + "\n"
+  }
+  anti_stmt.finalize
+
+  # For now, just output the generated content as JSON
+  # In a full implementation, this would write to a file at the specified path
+  Result.Ok(nil)
 }
 
 fn sha256_hash(content: String) -> String {

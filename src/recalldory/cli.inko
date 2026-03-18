@@ -10,7 +10,7 @@ type pub enum Command {
   case Feedback(Int, String)
   case Maintain(Bool)
   case AgentsMd(String)
-  case Stats(Bool)
+  case Stats
   case Export
   case Import(String)
 }
@@ -33,7 +33,7 @@ fn pub parse_args -> Option[Command] {
       case "feedback" -> parse_feedback(args)
       case "maintain" -> parse_maintain(args)
       case "agents-md" -> parse_agents_md(args)
-      case "stats" -> parse_stats(args)
+      case "stats" -> Option.Some(Command.Stats)
       case "export" -> Option.Some(Command.Export)
       case "import" -> parse_import(args)
       case _ -> Option.None
@@ -321,25 +321,6 @@ fn parse_agents_md(args: Array[String]) -> Option[Command] {
   }
 
   Option.Some(Command.AgentsMd(path))
-}
-
-fn parse_stats(args: Array[String]) -> Option[Command] {
-  let mut verbose = false
-
-  let mut i = 1
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == "--verbose" {
-          verbose = true
-        }
-      }
-      case Error(_) -> { }
-    }
-    i = i + 1
-  }
-
-  Option.Some(Command.Stats(verbose))
 }
 
 fn parse_import(args: Array[String]) -> Option[Command] {
