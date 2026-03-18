@@ -357,7 +357,8 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
 
 fn search_memories(db: mut Database, query: String, scope_filter: String, limit: Int) -> Result[Array[Memory], String] {
   # Use FTS5 for full-text search with bm25 ranking
-  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ?"
+  # Include bm25 score for combined scoring
+  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ?"
 
   if scope_filter != "" {
     sql = sql + " AND m.scope = ?"
@@ -407,7 +408,7 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
       stmt.finalize
       return Result.Error("Query failed")
     }
-    results.push(Memory.from_row(ref stmt))
+    results.push(Memory.from_row_with_score(ref stmt))
   }
   stmt.finalize
 
@@ -520,6 +521,7 @@ type pub Memory {
   let @created_at: String
   let @updated_at: String
   let @last_accessed: String
+  let @similarity: Float64
 }
 
 impl Memory{
@@ -540,7 +542,30 @@ impl Memory{
       harmful_count: stmt.column_int(12),
       created_at: stmt.column_text(13),
       updated_at: stmt.column_text(14),
-      last_accessed: stmt.column_text(15)
+      last_accessed: stmt.column_text(15),
+      similarity: 0.0
+    )
+  }
+
+  fn pub static from_row_with_score(stmt: ref Statement) -> Memory{
+    Memory(
+      id: stmt.column_int(0),
+      content: stmt.column_text(1),
+      content_hash: stmt.column_text(2),
+      summary: stmt.column_text(3),
+      tags: stmt.column_text(4),
+      scope: stmt.column_text(5),
+      status: stmt.column_text(6),
+      xflag: stmt.column_int(7) == 1,
+      strength: stmt.column_double(8),
+      access_count: stmt.column_int(9),
+      decay_rate: stmt.column_double(10),
+      helpful_count: stmt.column_int(11),
+      harmful_count: stmt.column_int(12),
+      created_at: stmt.column_text(13),
+      updated_at: stmt.column_text(14),
+      last_accessed: stmt.column_text(15),
+      similarity: stmt.column_double(16)
     )
   }
 }
@@ -557,7 +582,9 @@ fn output_memories(memories: Array[Memory], out: Stdout) {
     }
 
     let neg_val = if memory.xflag { "true" } else { "false" }
-    out.print("{\"id\": ${memory.id}, \"summary\": \"${escape_json(memory.content)}\", \"score\": ${(memory.strength as Float).to_string}, \"tags\": \"${escape_json(memory.tags)}\", \"status\": \"${memory.status}\", \"negative_flag\": ${neg_val}}")
+    # Use similarity if available (from search), otherwise use strength
+    let score = if (memory.similarity as Float) > 0.0 { memory.similarity } else { memory.strength }
+    out.print("{\"id\": ${memory.id}, \"summary\": \"${escape_json(memory.content)}\", \"score\": ${(score as Float).to_string}, \"tags\": \"${escape_json(memory.tags)}\", \"status\": \"${memory.status}\", \"negative_flag\": ${neg_val}}")
   }
 
   out.print("], \"token_count\": 0, \"budget_remaining\": 2000}")
