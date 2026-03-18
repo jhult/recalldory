@@ -362,13 +362,11 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       UNIQUE(content_hash)
     );
 
-    -- FTS5 for keyword search
+    -- FTS5 for keyword search (standalone table)
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       tags,
-      summary,
-      content='memories',
-      content_rowid='id'
+      summary
     );
 
     -- Indexes
