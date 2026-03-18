@@ -3,6 +3,10 @@ import db (Database, Statement, init_schema, SQLITE_ROW, SQLITE_DONE)
 import std.stdio (Stdout)
 import std.string (StringBuffer, IntoString)
 import std.crypto.sha2 (Sha256)
+import std.json (Json)
+import std.fs.file (ReadOnlyFile)
+import std.bytes (ByteArray)
+import std.io (Buffer)
 
 type async Main {
   fn async main {
@@ -143,8 +147,14 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
       }
     }
     case Import(file) -> {
-      # Import requires JSON parsing which is not available in stdlib
-      out.print("{\"error\": \"Import requires external JSON parser - use Python helper\"}")
+      match import_memories(db, file) {
+        case Ok(count) -> {
+          out.print("{\"success\": true, \"imported\": ${count}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
     }
     case AgentsMd(path) -> {
       match generate_agents_md(db, path) {
@@ -748,6 +758,78 @@ fn export_memories(db: mut Database) -> Result[String, String] {
 
   result = result + "\n  ], \"exported_at\": \"" + get_timestamp + "\"}"
   Result.Ok(result)
+}
+
+fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
+  # Read file contents
+  let path = file.to_path
+  let mut f = match ReadOnlyFile.new(path) {
+    case Ok(file) -> file
+    case Error(_) -> return Result.Error("Failed to open file: ${file}")
+  }
+
+  let mut bytes = ByteArray.new
+  let _ = f.read_all(bytes)
+  let content = bytes.into_string
+
+  # Create buffer and parse JSON
+  let buffer = Buffer.new(content)
+  let json = match Json.parse(buffer) {
+    case Ok(j) -> j
+    case Error(_) -> return Result.Error("Failed to parse JSON")
+  }
+
+  # Use Query to access memories array
+  let q = json.query
+  let memories_q = q.key("memories")
+
+  # Get the array
+  let memories = match memories_q.as_array {
+    case Some(arr) -> arr
+    case None -> return Result.Error("'memories' is not an array")
+  }
+
+  let mut count = 0
+
+  for mem in memories.iter {
+    # Get content from each memory object
+    let content_q = mem.query.key("content")
+    let mem_content = match content_q.as_string {
+      case Some(s) -> s
+      case None -> ""
+    }
+
+    if mem_content == "" {
+    } else {
+      # Extract tags (optional)
+      let tags = match mem.query.key("tags").as_string {
+        case Some(s) -> s
+        case None -> ""
+      }
+
+      # Extract scope (optional)
+      let scope = match mem.query.key("scope").as_string {
+        case Some(s) -> s
+        case None -> "project"
+      }
+
+      # Extract status (optional)
+      let status = match mem.query.key("status").as_string {
+        case Some(s) -> s
+        case None -> "active"
+      }
+
+      let pin = status == "pinned"
+
+      # Insert the memory
+      match add_memory(db, mem_content, tags, scope, pin) {
+        case Ok(_) -> count = count + 1
+        case Error(_) -> { }
+      }
+    }
+  }
+
+  Result.Ok(count)
 }
 
 fn get_timestamp -> String {
