@@ -1,0 +1,499 @@
+import cli (parse_args, Command)
+import db (Database, Statement, init_schema, SQLITE_ROW, SQLITE_DONE)
+import std.stdio (Stdout)
+import std.string (StringBuffer, IntoString)
+import std.crypto.sha2 (Sha256)
+
+type async Main {
+  fn async main {
+    let out = Stdout.new
+
+    match parse_args() {
+      case Some(cmd) -> {
+        match open_database() {
+          case Ok(db) -> {
+            let mut database = db
+            handle_command(cmd, database, out)
+            database.close
+          }
+          case Error(e) -> {
+            out.print("{\"error\": \"${e}\"}")
+          }
+        }
+      }
+      case None -> {
+        out.print("{\"error\": \"No command provided\"}")
+      }
+    }
+  }
+}
+
+fn open_database -> Result[Database, String] {
+  let path = get_db_path
+  let db = match Database.new(path) {
+    case Ok(d) -> d
+    case Error(e) -> return Result.Error("Failed to open database: ${e}")
+  }
+
+  match init_schema(db) {
+    case Error(e) -> {
+      db.close
+      return Result.Error("Failed to initialize schema: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  Result.Ok(db)
+}
+
+fn get_db_path -> String {
+  "./.inko-recall/memory.db"
+}
+
+fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
+  match cmd {
+    case Add(content, tags, scope, pin) -> {
+      match add_memory(db, content, tags, scope, pin) {
+        case Ok(id) -> {
+          out.print("{\"success\": true, \"id\": ${id}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Recall(query, budget, expand, full_id, scope, top) -> {
+      match list_memories(db, scope, "active", top) {
+        case Ok(mems) -> {
+          output_memories(mems, out)
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case List(scope, status, limit) -> {
+      match list_memories(db, scope, status, limit) {
+        case Ok(mems) -> {
+          output_memories(mems, out)
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Forget(id) -> {
+      match forget_memory(db, id) {
+        case Ok(deleted) -> {
+          out.print("{\"success\": ${deleted}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Pin(id) -> {
+      match pin_memory(db, id) {
+        case Ok(pinned) -> {
+          out.print("{\"success\": ${pinned}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Unpin(id) -> {
+      match unpin_memory(db, id) {
+        case Ok(unpinned) -> {
+          out.print("{\"success\": ${unpinned}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Feedback(id, feedback_type) -> {
+      match feedback_memory(db, id, feedback_type) {
+        case Ok(updated) -> {
+          out.print("{\"success\": ${updated}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Maintain(dry_run) -> {
+      out.print("{\"success\": true, \"message\": \"Maintenance not yet implemented\"}")
+    }
+    case AgentsMd(path) -> {
+      out.print("{\"success\": true, \"message\": \"AGENTS.md generation not yet implemented\"}")
+    }
+    case Stats(verbose) -> {
+      match list_memories(db, "", "", 1000) {
+        case Ok(mems) -> {
+          out.print("{\"total\": ${mems.size}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
+    }
+    case Export -> {
+      out.print("{\"error\": \"Export not yet implemented\"}")
+    }
+    case Import(file) -> {
+      out.print("{\"error\": \"Import not yet implemented\"}")
+    }
+  }
+}
+
+fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[Int, String] {
+  let hash = sha256_hash(content)
+  let status = if pin { "pinned" } else { "active" }
+
+  let check_sql = "SELECT id, access_count FROM memories WHERE content_hash = ?"
+  let mut stmt = match db.prepare(check_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_text(1, hash) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let mut existing_id: Option[Int] = Option.None
+  let mut existing_count = 0
+
+  if stmt.step == SQLITE_ROW {
+    existing_id = Option.Some(stmt.column_int(0))
+    existing_count = stmt.column_int(1)
+  }
+  stmt.finalize
+
+  match existing_id {
+    case Some(id) -> {
+      let update_sql = "UPDATE memories SET access_count = ?, last_accessed = datetime('now') WHERE id = ?"
+      let mut update_stmt = match db.prepare(update_sql) {
+        case Ok(s) -> s
+        case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+      }
+      match update_stmt.bind_int(1, existing_count + 1) {
+        case Error(e) -> {
+          update_stmt.finalize
+          return Result.Error("Failed to bind: ${e}")
+        }
+        case Ok(_) -> { }
+      }
+      match update_stmt.bind_int(2, id) {
+        case Error(e) -> {
+          update_stmt.finalize
+          return Result.Error("Failed to bind: ${e}")
+        }
+        case Ok(_) -> { }
+      }
+      let _ = update_stmt.step
+      update_stmt.finalize
+      return Result.Ok(id)
+    }
+    case None -> { }
+  }
+
+  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status) VALUES (?, ?, ?, ?, ?)"
+  let mut insert_stmt = match db.prepare(insert_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match insert_stmt.bind_text(1, content) {
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match insert_stmt.bind_text(2, hash) {
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match insert_stmt.bind_text(3, tags) {
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match insert_stmt.bind_text(4, scope) {
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match insert_stmt.bind_text(5, status) {
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let result = insert_stmt.step
+  insert_stmt.finalize
+
+  if result != SQLITE_DONE {
+    return Result.Error("Insert failed")
+  }
+
+  Result.Ok(db.last_insert_rowid as Int)
+}
+
+fn list_memories(db: mut Database, scope_filter: String, status_filter: String, limit: Int) -> Result[Array[Memory], String] {
+  let mut sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed FROM memories WHERE 1=1"
+
+  if scope_filter != "" {
+    sql = sql + " AND scope = ?"
+  }
+  if status_filter != ""{
+    sql = sql + " AND status = ?"
+  }
+
+  sql = sql + " ORDER BY last_accessed DESC LIMIT ?"
+
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  let mut idx = 1
+  if scope_filter != "" {
+    match stmt.bind_text(idx, scope_filter) {
+      case Error(e) -> {
+        stmt.finalize
+        return Result.Error("Failed to bind: ${e}")
+      }
+      case Ok(_) -> { }
+    }
+    idx = idx + 1
+  }
+  if status_filter != ""{
+    match stmt.bind_text(idx, status_filter) {
+      case Error(e) -> {
+        stmt.finalize
+        return Result.Error("Failed to bind: ${e}")
+      }
+      case Ok(_) -> { }
+    }
+    idx = idx + 1
+  }
+  match stmt.bind_int(idx, limit) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let mut results = []
+  loop {
+    let step_result = stmt.step
+    if step_result == SQLITE_DONE {
+      break
+    }
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error("Query failed")
+    }
+    results.push(Memory.from_row(ref stmt))
+  }
+  stmt.finalize
+
+  Result.Ok(results)
+}
+
+fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  let sql = "DELETE FROM memories WHERE id = ?"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_int(1, id) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let _ = stmt.step
+  stmt.finalize
+
+  Result.Ok(db.changes > 0)
+}
+
+fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  let sql = "UPDATE memories SET status = 'pinned', updated_at = datetime('now') WHERE id = ? AND status != 'pinned'"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_int(1, id) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let _ = stmt.step
+  stmt.finalize
+  Result.Ok(db.changes > 0)
+}
+
+fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String]{
+  let sql = "UPDATE memories SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'pinned'"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_int(1, id) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let _ = stmt.step
+  stmt.finalize
+  Result.Ok(db.changes > 0)
+}
+
+fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
+  let column = if feedback_type == "helpful" { "helpful_count" } else { "harmful_count" }
+  let sql = "UPDATE memories SET ${column} = ${column} + 1, updated_at = datetime('now') WHERE id = ?"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_int(1, id) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let _ = stmt.step
+  stmt.finalize
+  Result.Ok(db.changes > 0)
+}
+
+fn sha256_hash(content: String) -> String {
+  let bytes = content.to_byte_array
+  let mut hash = Sha256.new
+  hash.write(bytes)
+  hash.finish.to_string
+}
+
+type pub Memory {
+  let @id: Int
+  let @content: String
+  let @content_hash: String
+  let @summary: String
+  let @tags: String
+  let @scope: String
+  let @status: String
+  let @xflag: Bool
+  let @strength: Float64
+  let @access_count: Int
+  let @decay_rate: Float64
+  let @helpful_count: Int
+  let @harmful_count: Int
+  let @created_at: String
+  let @updated_at: String
+  let @last_accessed: String
+}
+
+impl Memory{
+  fn pub static from_row(stmt: ref Statement) -> Memory{
+    Memory(
+      id: stmt.column_int(0),
+      content: stmt.column_text(1),
+      content_hash: stmt.column_text(2),
+      summary: stmt.column_text(3),
+      tags: stmt.column_text(4),
+      scope: stmt.column_text(5),
+      status: stmt.column_text(6),
+      xflag: stmt.column_int(7) == 1,
+      strength: stmt.column_double(8),
+      access_count: stmt.column_int(9),
+      decay_rate: stmt.column_double(10),
+      helpful_count: stmt.column_int(11),
+      harmful_count: stmt.column_int(12),
+      created_at: stmt.column_text(13),
+      updated_at: stmt.column_text(14),
+      last_accessed: stmt.column_text(15)
+    )
+  }
+}
+
+fn output_memories(memories: Array[Memory], out: Stdout) {
+  let mut first = true
+  out.print("{\"results\": [")
+
+  for memory in memories.iter {
+    if first {
+      first = false
+    } else {
+      out.print(",")
+    }
+
+    let neg_val = if memory.xflag { "true" } else { "false" }
+    out.print("{\"id\": ${memory.id}, \"summary\": \"${escape_json(memory.content)}\", \"score\": ${(memory.strength as Float).to_string}, \"tags\": \"${escape_json(memory.tags)}\", \"status\": \"${memory.status}\", \"negative_flag\": ${neg_val}}")
+  }
+
+  out.print("], \"token_count\": 0, \"budget_remaining\": 2000}")
+}
+
+fn escape_json(s: String) -> String{
+  let mut result = StringBuffer.new
+  for c in s.chars {
+    match c {
+      case '"' -> {
+        result.push('\\')
+        result.push('"')
+      }
+      case '\\' -> {
+        result.push('\\')
+        result.push('\\')
+      }
+      case '\n' -> {
+        result.push('\\')
+        result.push('n')
+      }
+      case '\r' -> {
+        result.push('\\')
+        result.push('r')
+      }
+      case '\t' -> {
+        result.push('\\')
+        result.push('t')
+      }
+      case _ -> {
+        result.push(c)
+      }
+    }
+  }
+  result.into_string
+}

@@ -1,0 +1,382 @@
+import extern "sqlite3"
+import std.string (StringBuffer, IntoString)
+
+# SQLite constants
+let pub SQLITE_OK = 0
+let pub SQLITE_ROW = 100
+let pub SQLITE_DONE = 101
+let pub SQLITE_TRANSIENT = -1
+
+type pub Database {
+  let mut @handle: Pointer[UInt8]
+  let @path: String
+}
+
+type pub Statement {
+  let mut @handle: Pointer[UInt8]
+}
+
+# External SQLite functions
+fn extern sqlite3_open(filename: Pointer[UInt8], db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_close(db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_exec(
+  db: Pointer[UInt8],
+  sql: Pointer[UInt8],
+  callback: Pointer[UInt8],
+  arg: Pointer[UInt8],
+  errmsg: Pointer[UInt8]
+) -> Int32
+fn extern sqlite3_prepare_v2(
+  db: Pointer[UInt8],
+  sql: Pointer[UInt8],
+  nbyte: Int32,
+  stmt: Pointer[UInt8],
+  tail: Pointer[UInt8]
+) -> Int32
+fn extern sqlite3_step(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_finalize(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_reset(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_column_count(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_column_type(stmt: Pointer[UInt8], col: Int32) -> Int32
+fn extern sqlite3_column_text(stmt: Pointer[UInt8], col: Int32) -> Pointer[UInt8]
+fn extern sqlite3_column_int(stmt: Pointer[UInt8], col: Int32) -> Int32
+fn extern sqlite3_column_double(stmt: Pointer[UInt8], col: Int32) -> Float64
+fn extern sqlite3_column_bytes(stmt: Pointer[UInt8], col: Int32) -> Int32
+fn extern sqlite3_column_blob(stmt: Pointer[UInt8], col: Int32) -> Pointer[UInt8]
+fn extern sqlite3_bind_text(
+  stmt: Pointer[UInt8],
+  idx: Int32,
+  val: Pointer[UInt8],
+  n: Int32,
+  destructor: Int64
+) -> Int32
+fn extern sqlite3_bind_int(stmt: Pointer[UInt8], idx: Int32, val: Int32) -> Int32
+fn extern sqlite3_bind_int64(stmt: Pointer[UInt8], idx: Int32, val: Int64) -> Int32
+fn extern sqlite3_bind_double(stmt: Pointer[UInt8], idx: Int32, val: Float64) -> Int32
+fn extern sqlite3_bind_null(stmt: Pointer[UInt8], idx: Int32) -> Int32
+fn extern sqlite3_bind_blob(
+  stmt: Pointer[UInt8],
+  idx: Int32,
+  val: Pointer[UInt8],
+  n: Int32,
+  destructor: Int64
+) -> Int32
+fn extern sqlite3_errmsg(db: Pointer[UInt8]) -> Pointer[UInt8]
+fn extern sqlite3_last_insert_rowid(db: Pointer[UInt8]) -> Int64
+fn extern sqlite3_changes(db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_enable_load_extension(db: Pointer[UInt8], onoff: Int32) -> Int32
+fn extern sqlite3_load_extension(
+  db: Pointer[UInt8],
+  file: Pointer[UInt8],
+  proc: Pointer[UInt8],
+  errmsg: Pointer[UInt8]
+) -> Int32
+fn extern sqlite3_free(ptr: Pointer[UInt8])
+
+# External C functions for memory management
+fn extern malloc(size: UInt64) -> Pointer[UInt8]
+fn extern free(ptr: Pointer[UInt8])
+
+impl Database {
+  fn pub static new(path: String) -> Result[Database, String] {
+    # Allocate 8 bytes for the output pointer (64-bit)
+    let db_ptr_addr = malloc(8 as UInt64)
+
+    let path_bytes = to_cstr(path)
+    let result = sqlite3_open(path_bytes.pointer, db_ptr_addr)
+
+    if (result as Int) != 0 {
+      free(db_ptr_addr)
+      return Result.Error("Failed to open database: ${path}")
+    }
+
+    # Read the pointer value from the allocated memory
+    let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
+    free(db_ptr_addr)
+
+    Result.Ok(Database(handle: db_ptr, path: path))
+  }
+
+  fn pub mut close {
+    if @handle as Int != 0 {
+      sqlite3_close(@handle)
+      @handle = 0 as Pointer[UInt8]
+    }
+  }
+
+  fn pub mut exec(sql: String) -> Result[Nil, String] {
+    if @handle as Int == 0 {
+      return Result.Error("Database not open")
+    }
+
+    let sql_bytes = to_cstr(sql)
+    let result = sqlite3_exec(
+      @handle,
+      sql_bytes.pointer,
+      0 as Pointer[UInt8],
+      0 as Pointer[UInt8],
+      0 as Pointer[UInt8]
+    )
+
+    if (result as Int) != 0 {
+      let errmsg = sqlite3_errmsg(@handle)
+      return Result.Error("SQL error: ${pointer_to_string(errmsg)}")
+    }
+
+    Result.Ok(nil)
+  }
+
+  fn pub mut prepare(sql: String) -> Result[Statement, String] {
+    if @handle as Int == 0 {
+      return Result.Error("Database not open")
+    }
+
+    let sql_bytes = to_cstr(sql)
+    let stmt_ptr_addr = malloc(8 as UInt64)
+
+    let result = sqlite3_prepare_v2(
+      @handle,
+      sql_bytes.pointer,
+      (sql_bytes.size as Int32),
+      stmt_ptr_addr,
+      0 as Pointer[UInt8]
+    )
+
+    if (result as Int) != 0 {
+      let errmsg = sqlite3_errmsg(@handle)
+      free(stmt_ptr_addr)
+      return Result.Error("Prepare error: ${pointer_to_string(errmsg)}")
+    }
+
+    let stmt_ptr = (stmt_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
+    free(stmt_ptr_addr)
+
+    Result.Ok(Statement(handle: stmt_ptr))
+  }
+
+  fn pub mut last_insert_rowid -> Int64 {
+    sqlite3_last_insert_rowid(@handle)
+  }
+
+  fn pub mut changes -> Int {
+    sqlite3_changes(@handle) as Int
+  }
+
+  fn pub mut enable_load_extension(enable: Bool) -> Result[Nil, String] {
+    let onoff = if enable { 1 } else { 0 }
+    let result = sqlite3_enable_load_extension(@handle, onoff as Int32)
+
+    if (result as Int) != 0 {
+      return Result.Error("Failed to enable extension loading")
+    }
+
+    Result.Ok(nil)
+  }
+
+  fn pub mut load_extension(path: String) -> Result[Nil, String] {
+    let path_bytes = to_cstr(path)
+    let errmsg_addr = malloc(8 as UInt64)
+
+    let result = sqlite3_load_extension(
+      @handle,
+      path_bytes.pointer,
+      0 as Pointer[UInt8],
+      errmsg_addr
+    )
+
+    if (result as Int) != 0 {
+      let errmsg = (errmsg_addr as Pointer[Int64]).0 as Pointer[UInt8]
+      let err_str = pointer_to_string(errmsg)
+      sqlite3_free(errmsg)
+      free(errmsg_addr)
+      return Result.Error("Failed to load extension: ${err_str}")
+    }
+
+    free(errmsg_addr)
+    Result.Ok(nil)
+  }
+}
+
+impl Statement {
+  fn pub mut step -> Int {
+    sqlite3_step(@handle) as Int
+  }
+
+  fn pub mut reset -> Result[Nil, String] {
+    let result = sqlite3_reset(@handle)
+    if (result as Int) != 0 {
+      return Result.Error("Reset failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut finalize {
+    if @handle as Int != 0 {
+      sqlite3_finalize(@handle)
+      @handle = 0 as Pointer[UInt8]
+    }
+  }
+
+  fn pub column_count -> Int {
+    sqlite3_column_count(@handle) as Int
+  }
+
+  fn pub column_text(col: Int) -> String {
+    let ptr = sqlite3_column_text(@handle, col as Int32)
+    pointer_to_string(ptr)
+  }
+
+  fn pub column_int(col: Int) -> Int {
+    sqlite3_column_int(@handle, col as Int32) as Int
+  }
+
+  fn pub column_double(col: Int) -> Float64 {
+    sqlite3_column_double(@handle, col as Int32)
+  }
+
+  fn pub column_blob(col: Int) -> ByteArray {
+    let ptr = sqlite3_column_blob(@handle, col as Int32)
+    let len = sqlite3_column_bytes(@handle, col as Int32) as Int
+
+    if len == 0 or ptr as Int == 0 {
+      return ByteArray.new
+    }
+
+    let mut result = ByteArray.new
+    let mut i = 0
+    while i < len {
+      let byte_ptr = (ptr as Int + i) as Pointer[UInt8]
+      result.push(byte_ptr.0 as Int)
+      i = i + 1
+    }
+    result
+  }
+
+  fn pub mut bind_text(idx: Int, value: String) -> Result[Nil, String] {
+    let bytes = value.to_byte_array
+    let result = sqlite3_bind_text(
+      @handle,
+      idx as Int32,
+      bytes.pointer,
+      (bytes.size as Int32),
+      SQLITE_TRANSIENT as Int64
+    )
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind text failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut bind_int(idx: Int, value: Int) -> Result[Nil, String] {
+    let result = sqlite3_bind_int(@handle, idx as Int32, value as Int32)
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind int failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut bind_int64(idx: Int, value: Int64) -> Result[Nil, String] {
+    let result = sqlite3_bind_int64(@handle, idx as Int32, value)
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind int64 failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut bind_double(idx: Int, value: Float64) -> Result[Nil, String] {
+    let result = sqlite3_bind_double(@handle, idx as Int32, value)
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind double failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut bind_null(idx: Int) -> Result[Nil, String] {
+    let result = sqlite3_bind_null(@handle, idx as Int32)
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind null failed")
+    }
+    Result.Ok(nil)
+  }
+
+  fn pub mut bind_blob(idx: Int, value: ByteArray) -> Result[Nil, String] {
+    let result = sqlite3_bind_blob(
+      @handle,
+      idx as Int32,
+      value.pointer,
+      (value.size as Int32),
+      SQLITE_TRANSIENT as Int64
+    )
+
+    if (result as Int) != 0 {
+      return Result.Error("Bind blob failed")
+    }
+    Result.Ok(nil)
+  }
+}
+
+# Converts a String to a null-terminated byte array for C FFI.
+fn to_cstr(s: ref String) -> ByteArray {
+  let mut bytes = s.to_byte_array
+  bytes.push(0)
+  bytes
+}
+
+fn pointer_to_string(ptr: Pointer[UInt8]) -> String {
+  if ptr as Int == 0 {
+    return ""
+  }
+
+  String.from_pointer(ptr)
+}
+
+fn pub init_schema(db: mut Database) -> Result[Nil, String] {
+  let schema = "
+    -- Core memory table
+    CREATE TABLE IF NOT EXISTS memories (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      content       TEXT NOT NULL,
+      content_hash  TEXT NOT NULL,
+      summary       TEXT,
+      tags          TEXT DEFAULT '[]',
+      scope         TEXT DEFAULT 'project',
+      status        TEXT DEFAULT 'active',
+      is_negative   INTEGER DEFAULT 0,
+
+      strength      REAL DEFAULT 0.5,
+      access_count  INTEGER DEFAULT 0,
+      decay_rate    REAL DEFAULT 0.01,
+
+      helpful_count INTEGER DEFAULT 0,
+      harmful_count INTEGER DEFAULT 0,
+
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
+
+      UNIQUE(content_hash)
+    );
+
+    -- FTS5 for keyword search
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      content,
+      tags,
+      summary,
+      content='memories',
+      content_rowid='id'
+    );
+
+    -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+    CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed);
+    CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
+  "
+
+  db.exec(schema)
+}

@@ -1,0 +1,375 @@
+import std.env
+
+type pub enum Command {
+  case Add(String, String, String, Bool)
+  case Recall(String, Int, Bool, Option[Int], String, Int)
+  case List(String, String, Int)
+  case Forget(Int)
+  case Pin(Int)
+  case Unpin(Int)
+  case Feedback(Int, String)
+  case Maintain(Bool)
+  case AgentsMd(String)
+  case Stats(Bool)
+  case Export
+  case Import(String)
+}
+
+fn pub parse_args -> Option[Command] {
+  let args = env.arguments
+
+  if args.size < 1 {
+    return Option.None
+  }
+
+  match args.get(0) {
+    case Ok(cmd) -> match cmd {
+      case "add" -> parse_add(args)
+      case "recall" -> parse_recall(args)
+      case "list" -> parse_list(args)
+      case "forget" -> parse_forget(args)
+      case "pin" -> parse_pin(args)
+      case "unpin" -> parse_unpin(args)
+      case "feedback" -> parse_feedback(args)
+      case "maintain" -> parse_maintain(args)
+      case "agents-md" -> parse_agents_md(args)
+      case "stats" -> parse_stats(args)
+      case "export" -> Option.Some(Command.Export)
+      case "import" -> parse_import(args)
+      case _ -> Option.None
+    }
+    case Error(_) -> Option.None
+  }
+}
+
+fn parse_add(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  let content = match args.get(1) {
+    case Ok(c) -> c
+    case Error(_) -> return Option.None
+  }
+
+  let mut tags = ""
+  let mut scope = "project"
+  let mut pin = false
+
+  let mut i = 2
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--tags" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(t) -> {
+              tags = t
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--scope" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(s) -> {
+              scope = s
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--pin" {
+          pin = true
+          i = i + 1
+        } else {
+          i = i + 1
+        }
+      }
+      case Error(_) -> i = i + 1
+    }
+  }
+
+  Option.Some(Command.Add(content, tags, scope, pin))
+}
+
+fn parse_recall(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  let query = match args.get(1) {
+    case Ok(q) -> q
+    case Error(_) -> return Option.None
+  }
+
+  let mut budget = 2000
+  let mut expand = false
+  let mut full_id: Option[Int] = Option.None
+  let mut scope = ""
+  let mut top = 10
+
+  let mut i = 2
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--budget" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(b) -> {
+              match int_parse(b) {
+                case Some(v) -> budget = v
+                case None -> { }
+              }
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--expand" {
+          expand = true
+          i = i + 1
+        } else if arg == "--full" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(id_str) -> {
+              full_id = int_parse(id_str)
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--scope" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(s) -> {
+              scope = s
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--top" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(t) -> {
+              match int_parse(t) {
+                case Some(v) -> top = v
+                case None -> { }
+              }
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else {
+          i = i + 1
+        }
+      }
+      case Error(_) -> i = i + 1
+    }
+  }
+
+  Option.Some(Command.Recall(query, budget, expand, full_id, scope, top))
+}
+
+fn parse_list(args: Array[String]) -> Option[Command] {
+  let mut scope = ""
+  let mut status = ""
+  let mut limit = 50
+
+  let mut i = 1
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--scope" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(s) -> {
+              scope = s
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--status" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(s) -> {
+              status = s
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--limit" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(l) -> {
+              match int_parse(l) {
+                case Some(v) -> limit = v
+                case None -> { }
+              }
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else {
+          i = i + 1
+        }
+      }
+      case Error(_) -> i = i + 1
+    }
+  }
+
+  Option.Some(Command.List(scope, status, limit))
+}
+
+fn parse_forget(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  match args.get(1) {
+    case Ok(id_str) -> {
+      match int_parse(id_str) {
+        case Some(id) -> Option.Some(Command.Forget(id))
+        case None -> Option.None
+      }
+    }
+    case Error(_) -> Option.None
+  }
+}
+
+fn parse_pin(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  match args.get(1) {
+    case Ok(id_str) -> {
+      match int_parse(id_str) {
+        case Some(id) -> Option.Some(Command.Pin(id))
+        case None -> Option.None
+      }
+    }
+    case Error(_) -> Option.None
+  }
+}
+
+fn parse_unpin(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  match args.get(1) {
+    case Ok(id_str) -> {
+      match int_parse(id_str) {
+        case Some(id) -> Option.Some(Command.Unpin(id))
+        case None -> Option.None
+      }
+    }
+    case Error(_) -> Option.None
+  }
+}
+
+fn parse_feedback(args: Array[String]) -> Option[Command] {
+  if args.size < 3 {
+    return Option.None
+  }
+
+  let id = match args.get(1) {
+    case Ok(id_str) -> match int_parse(id_str) {
+      case Some(i) -> i
+      case None -> return Option.None
+    }
+    case Error(_) -> return Option.None
+  }
+
+  let feedback_type = match args.get(2) {
+    case Ok(t) -> t
+    case Error(_) -> return Option.None
+  }
+
+  Option.Some(Command.Feedback(id, feedback_type))
+}
+
+fn parse_maintain(args: Array[String]) -> Option[Command] {
+  let mut dry_run = false
+
+  let mut i = 1
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--dry-run" {
+          dry_run = true
+        }
+      }
+      case Error(_) -> { }
+    }
+    i = i + 1
+  }
+
+  Option.Some(Command.Maintain(dry_run))
+}
+
+fn parse_agents_md(args: Array[String]) -> Option[Command] {
+  let mut path = "."
+
+  let mut i = 1
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--path" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(p) -> {
+              path = p
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else {
+          i = i + 1
+        }
+      }
+      case Error(_) -> i = i + 1
+    }
+  }
+
+  Option.Some(Command.AgentsMd(path))
+}
+
+fn parse_stats(args: Array[String]) -> Option[Command] {
+  let mut verbose = false
+
+  let mut i = 1
+  while i < args.size {
+    match args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--verbose" {
+          verbose = true
+        }
+      }
+      case Error(_) -> { }
+    }
+    i = i + 1
+  }
+
+  Option.Some(Command.Stats(verbose))
+}
+
+fn parse_import(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  match args.get(1) {
+    case Ok(file) -> Option.Some(Command.Import(file))
+    case Error(_) -> Option.None
+  }
+}
+
+fn int_parse(s: String) -> Option[Int] {
+  let mut result = 0
+  let mut valid = false
+  let bytes = s.to_byte_array
+
+  for byte in bytes.iter {
+    if byte >= 48 and byte <= 57 {
+      valid = true
+      result = result * 10 + (byte - 48)
+    } else {
+      return Option.None
+    }
+  }
+
+  if valid {
+    Option.Some(result)
+  } else {
+    Option.None
+  }
+}
