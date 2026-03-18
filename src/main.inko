@@ -133,10 +133,18 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
       }
     }
     case Export -> {
-      out.print("{\"error\": \"Export not yet implemented\"}")
+      match export_memories(db) {
+        case Ok(json) -> {
+          out.print(json)
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${e}\"}")
+        }
+      }
     }
     case Import(file) -> {
-      out.print("{\"error\": \"Import not yet implemented\"}")
+      # Import requires JSON parsing which is not available in stdlib
+      out.print("{\"error\": \"Import requires external JSON parser - use Python helper\"}")
     }
     case AgentsMd(path) -> {
       match generate_agents_md(db, path) {
@@ -689,6 +697,63 @@ fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   # For now, just output the generated content as JSON
   # In a full implementation, this would write to a file at the specified path
   Result.Ok(nil)
+}
+
+fn export_memories(db: mut Database) -> Result[String, String] {
+  let sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed FROM memories ORDER BY created_at DESC"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  let mut result = "{\"memories\": [\n"
+  let mut first = true
+
+  loop {
+    let step_result = stmt.step
+    if step_result == SQLITE_DONE {
+      break
+    }
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error("Query failed")
+    }
+
+    if first {
+      first = false
+    } else {
+      result = result + ",\n"
+    }
+
+    let id = stmt.column_int(0)
+    let content = escape_json(stmt.column_text(1))
+    let content_hash = stmt.column_text(2)
+    let summary = escape_json(stmt.column_text(3))
+    let tags = escape_json(stmt.column_text(4))
+    let scope = stmt.column_text(5)
+    let status = stmt.column_text(6)
+    let is_negative = stmt.column_int(7)
+    let strength = stmt.column_double(8)
+    let access_count = stmt.column_int(9)
+    let decay_rate = stmt.column_double(10)
+    let helpful_count = stmt.column_int(11)
+    let harmful_count = stmt.column_int(12)
+    let created_at = stmt.column_text(13)
+    let updated_at = stmt.column_text(14)
+    let last_accessed = stmt.column_text(15)
+
+    result = result + "    {\"id\": ${id}, \"content\": \"${content}\", \"content_hash\": \"${content_hash}\", \"summary\": \"${summary}\", \"tags\": \"${tags}\", \"scope\": \"${scope}\", \"status\": \"${status}\", \"is_negative\": ${is_negative}, \"strength\": ${(strength as Float).to_string}, \"access_count\": ${access_count}, \"decay_rate\": ${(decay_rate as Float).to_string}, \"helpful_count\": ${helpful_count}, \"harmful_count\": ${harmful_count}, \"created_at\": \"${created_at}\", \"updated_at\": \"${updated_at}\", \"last_accessed\": \"${last_accessed}\"}"
+  }
+  stmt.finalize
+
+  result = result + "\n  ], \"exported_at\": \"" + get_timestamp + "\"}"
+  Result.Ok(result)
+}
+
+fn get_timestamp -> String {
+  # Return current timestamp in ISO format
+  # Using SQLite's datetime function to get consistent format
+  "datetime('now')"
 }
 
 fn sha256_hash(content: String) -> String {
