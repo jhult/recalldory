@@ -914,6 +914,20 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   }
   stmt.finalize
 
+  # Update last_accessed and retrieval_strength for returned memories
+  for mem in results.iter {
+    let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id = ?"
+    let mut touch_stmt = match db.prepare(touch_sql) {
+      case Ok(s) -> s
+      case Error(_) -> next
+    }
+    match touch_stmt.bind_int(1, mem.id) {
+      case Ok(_) -> { let _ = touch_stmt.step }
+      case Error(_) -> {}
+    }
+    touch_stmt.finalize
+  }
+
   Result.Ok(results)
 }
 
