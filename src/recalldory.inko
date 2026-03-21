@@ -1013,6 +1013,10 @@ fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String]{
 }
 
 fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
+  if feedback_type != "helpful" and feedback_type != "harmful" {
+    return Result.Error("Invalid feedback type: must be 'helpful' or 'harmful'")
+  }
+
   let column = if feedback_type == "helpful" { "helpful_count" } else { "harmful_count" }
   let sql = "UPDATE memories SET ${column} = ${column} + 1, updated_at = datetime('now') WHERE id = ?"
   let mut stmt = match db.prepare(sql) {
