@@ -36,7 +36,7 @@ type async Main {
             handle_hook_install(out)
           }
           case Add(a, b, c, d) -> run_with_db(Command.Add(a, b, c, d), global, out)
-          case Recall(a, b, c, d, e, f) -> run_with_db(Command.Recall(a, b, c, d, e, f), global, out)
+          case Recall(a, b, c) -> run_with_db(Command.Recall(a, b, c), global, out)
           case List(a, b, c) -> run_with_db(Command.List(a, b, c), global, out)
           case Forget(a) -> run_with_db(Command.Forget(a), global, out)
           case Pin(a) -> run_with_db(Command.Pin(a), global, out)
@@ -342,7 +342,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
         }
       }
     }
-    case Recall(query, budget, expand, full_id, scope, top) -> {
+    case Recall(query, scope, top) -> {
       match search_memories(db, query, scope, top) {
         case Ok(mems) -> {
           output_memories(mems, out)
@@ -2195,7 +2195,7 @@ fn output_memories(memories: Array[Memory], out: Stdout) {
     out.print("{\"id\": ${memory.id}, \"summary\": \"${escape_json(memory.content)}\", \"score\": ${(score as Float).to_string}, \"tags\": \"${escape_json(memory.tags)}\", \"status\": \"${memory.status}\", \"negative_flag\": ${neg_val}}")
   }
 
-  out.print("], \"token_count\": 0, \"budget_remaining\": 2000}")
+  out.print("]}")
 }
 
 fn escape_json(s: String) -> String{

@@ -2,7 +2,7 @@ import std.env
 
 type pub enum Command {
   case Add(String, String, String, Bool)
-  case Recall(String, Int, Bool, Option[Int], String, Int)
+  case Recall(String, String, Int)
   case List(String, String, Int)
   case Forget(Int)
   case Pin(Int)
@@ -142,9 +142,6 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  let mut budget = 2000
-  let mut expand = false
-  let mut full_id: Option[Int] = Option.None
   let mut scope = ""
   let mut top = 10
 
@@ -152,29 +149,7 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--budget" and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(b) -> {
-              match int_parse(b) {
-                case Some(v) -> budget = v
-                case None -> { }
-              }
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == "--expand" {
-          expand = true
-          i = i + 1
-        } else if arg == "--full" and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(id_str) -> {
-              full_id = int_parse(id_str)
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == "--scope" and i + 1 < args.size {
+        if arg == "--scope" and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               scope = s
@@ -201,7 +176,7 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.Recall(query, budget, expand, full_id, scope, top))
+  Option.Some(Command.Recall(query, scope, top))
 }
 
 fn parse_list(args: Array[String]) -> Option[Command] {
