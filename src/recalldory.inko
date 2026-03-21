@@ -1111,6 +1111,22 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   let _ = supersede_stmt.step
   supersede_stmt.finalize
 
+  # Clean up FTS entry for superseded memory
+  let fts_del_sql = "DELETE FROM memories_fts WHERE rowid = ?"
+  let mut fts_del_stmt = match db.prepare(fts_del_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare FTS cleanup: ${e}")
+  }
+  match fts_del_stmt.bind_int(1, id) {
+    case Error(e) -> {
+      fts_del_stmt.finalize
+      return Result.Error("Failed to bind FTS cleanup: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  let _ = fts_del_stmt.step
+  fts_del_stmt.finalize
+
   # Create new memory with parent_id pointing to old memory
   let hash = sha256_hash(content)
   let simhash_val = simhash(content)
