@@ -5,9 +5,11 @@ import std.stdio (Stdout)
 import std.string (StringBuffer, IntoString)
 import std.crypto.sha2 (Sha256)
 import std.json (Json)
-import std.fs.file (ReadOnlyFile)
+import std.fs.file (ReadOnlyFile, WriteOnlyFile)
+import std.fs.path (Path)
 import std.bytes (ByteArray)
-import std.io (Buffer)
+import std.io (Buffer, Write)
+import std.map (Map)
 
 type async Main {
   fn async main {
@@ -20,6 +22,9 @@ type async Main {
         match cmd {
           case HookPostCompact -> {
             handle_hook_post_compact(out)
+          }
+          case HookInstall -> {
+            handle_hook_install(out)
           }
           case Add(a, b, c, d) -> run_with_db(Command.Add(a, b, c, d), global, out)
           case Recall(a, b, c, d, e, f) -> run_with_db(Command.Recall(a, b, c, d, e, f), global, out)
@@ -106,6 +111,176 @@ fn handle_hook_post_compact(out: Stdout) {
     out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"${context}\"}}")
   } else {
     out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"\"}}")
+  }
+}
+
+fn handle_hook_install(out: Stdout) {
+  # Resolve path to this executable for the hook command
+  let exe_path = match env.executable {
+    case Ok(p) -> p.to_string
+    case Error(_) -> {
+      out.print("{\"error\": \"Cannot determine recalldory executable path\"}")
+      return
+    }
+  }
+
+  let home = match env.get("HOME") {
+    case Ok(h) -> h
+    case Error(_) -> {
+      out.print("{\"error\": \"HOME not set\"}")
+      return
+    }
+  }
+
+  let settings_path = "${home}/.claude/settings.json"
+  let settings_file = settings_path.to_path
+
+  # Read existing settings or start with empty object
+  let mut root = match ReadOnlyFile.new(settings_file) {
+    case Ok(f) -> {
+      let mut file = f
+      let mut bytes = ByteArray.new
+      let _ = file.read_all(bytes)
+      let content = bytes.into_string
+      let buffer = Buffer.new(content)
+      match Json.parse(buffer) {
+        case Ok(json) -> json
+        case Error(_) -> {
+          out.print("{\"error\": \"Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry.\"}")
+          return
+        }
+      }
+    }
+    case Error(_) -> Json.Object(Map.new)
+  }
+
+  # Build the hook entry:
+  # { "matcher": "compact", "hooks": [{ "type": "command", "command": "<exe> hook post-compact" }] }
+  let mut inner_hook: Map[String, Json] = Map.new
+  inner_hook.set("type", Json.String("command"))
+  inner_hook.set("command", Json.String("${exe_path} hook post-compact"))
+
+  let mut matcher_obj: Map[String, Json] = Map.new
+  matcher_obj.set("matcher", Json.String("compact"))
+  matcher_obj.set("hooks", Json.Array([Json.Object(inner_hook)]))
+
+  let recalldory_entry = Json.Object(matcher_obj)
+
+  # Get or create the hooks object, then set SessionStart
+  match mut root {
+    case Object(root_map) -> {
+      match root_map.get("hooks") {
+        case Ok(hooks_val) -> {
+          match hooks_val {
+            case Object(_) -> {}
+            case _ -> {
+              # hooks exists but isn't an object — replace it
+              root_map.set("hooks", Json.Object(Map.new))
+            }
+          }
+        }
+        case Error(_) -> {
+          root_map.set("hooks", Json.Object(Map.new))
+        }
+      }
+
+      # Now get the hooks map mutably and set SessionStart
+      match root_map.get_mut("hooks") {
+        case Ok(hooks_json) -> {
+          match mut hooks_json {
+            case Object(hooks_map) -> {
+              # Check if SessionStart already has a compact matcher from recalldory
+              let mut already_installed = false
+              match hooks_map.get("SessionStart") {
+                case Ok(ss) -> {
+                  match ss {
+                    case Array(arr) -> {
+                      for entry in arr.iter {
+                        match entry {
+                          case Object(entry_map) -> {
+                            match entry_map.get("matcher") {
+                              case Ok(m) -> {
+                                match m {
+                                  case String(s) if s == "compact" -> {
+                                    already_installed = true
+                                  }
+                                  case _ -> {}
+                                }
+                              }
+                              case Error(_) -> {}
+                            }
+                          }
+                          case _ -> {}
+                        }
+                      }
+                    }
+                    case _ -> {}
+                  }
+                }
+                case Error(_) -> {}
+              }
+
+              if already_installed {
+                out.print("{\"success\": true, \"message\": \"Hook already installed\"}")
+                return
+              }
+
+              # Add our entry to SessionStart array (or create it)
+              match hooks_map.get("SessionStart") {
+                case Ok(ss) -> {
+                  match ss {
+                    case Array(_) -> {
+                      # Append to existing array
+                      match hooks_map.get_mut("SessionStart") {
+                        case Ok(ss_mut) -> {
+                          match mut ss_mut {
+                            case Array(arr) -> arr.push(recalldory_entry)
+                            case _ -> {}
+                          }
+                        }
+                        case Error(_) -> {}
+                      }
+                    }
+                    case _ -> {
+                      hooks_map.set("SessionStart", Json.Array([recalldory_entry]))
+                    }
+                  }
+                }
+                case Error(_) -> {
+                  hooks_map.set("SessionStart", Json.Array([recalldory_entry]))
+                }
+              }
+            }
+            case _ -> {}
+          }
+        }
+        case Error(_) -> {}
+      }
+    }
+    case _ -> {
+      out.print("{\"error\": \"settings.json root is not an object\"}")
+      return
+    }
+  }
+
+  # Write back with pretty printing
+  let output = root.to_pretty_string + "\n"
+  match WriteOnlyFile.new(settings_file) {
+    case Ok(f) -> {
+      let mut file = f
+      match file.write(output.to_byte_array) {
+        case Ok(_) -> {
+          let _ = file.flush
+          out.print("{\"success\": true, \"message\": \"Hook installed to ${settings_path}\"}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"Failed to write settings: ${e}\"}")
+        }
+      }
+    }
+    case Error(e) -> {
+      out.print("{\"error\": \"Failed to open settings for writing: ${e}\"}")
+    }
   }
 }
 
@@ -263,6 +438,9 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
       }
     }
     case HookPostCompact -> {
+      # Handled in main before DB open; this branch is unreachable
+    }
+    case HookInstall -> {
       # Handled in main before DB open; this branch is unreachable
     }
   }

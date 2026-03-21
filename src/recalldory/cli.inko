@@ -14,6 +14,7 @@ type pub enum Command {
   case Export
   case Import(String)
   case HookPostCompact
+  case HookInstall
 }
 
 type pub ParsedArgs {
@@ -377,6 +378,7 @@ fn parse_hook(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(sub) -> match sub {
       case "post-compact" -> Option.Some(Command.HookPostCompact)
+      case "install" -> Option.Some(Command.HookInstall)
       case _ -> Option.None
     }
     case Error(_) -> Option.None
