@@ -359,6 +359,20 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
       last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
 
+      -- SimHash for near-duplicate detection (64-bit as hex string)
+      simhash       TEXT,
+
+      -- Dual-strength decay
+      storage_strength   REAL DEFAULT 0.1,
+      retrieval_strength REAL DEFAULT 1.0,
+
+      -- Version chains
+      parent_id     INTEGER REFERENCES memories(id),
+
+      -- Contradiction tracking
+      is_contradiction INTEGER DEFAULT 0,
+      contradicts_id   INTEGER REFERENCES memories(id),
+
       UNIQUE(content_hash)
     );
 
@@ -374,7 +388,45 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
     CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed);
     CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
+    CREATE INDEX IF NOT EXISTS idx_memories_simhash ON memories(simhash);
+    CREATE INDEX IF NOT EXISTS idx_memories_parent_id ON memories(parent_id);
   "
 
   db.exec(schema)
+}
+
+# Migrate existing databases to add new columns
+# SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we try and ignore errors
+fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
+  # Try to add new columns (ignore errors if columns already exist)
+  let migrations = [
+    "ALTER TABLE memories ADD COLUMN simhash TEXT",
+    "ALTER TABLE memories ADD COLUMN storage_strength REAL DEFAULT 0.1",
+    "ALTER TABLE memories ADD COLUMN retrieval_strength REAL DEFAULT 1.0",
+    "ALTER TABLE memories ADD COLUMN parent_id INTEGER REFERENCES memories(id)",
+    "ALTER TABLE memories ADD COLUMN is_contradiction INTEGER DEFAULT 0",
+    "ALTER TABLE memories ADD COLUMN contradicts_id INTEGER REFERENCES memories(id)"
+  ]
+
+  for sql in migrations.iter {
+    # Try the migration - ignore errors (column already exists)
+    let _ = db.exec(sql)
+  }
+
+  # Try to add indexes (ignore errors if already exist)
+  let indexes = [
+    "CREATE INDEX IF NOT EXISTS idx_memories_simhash ON memories(simhash)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_parent_id ON memories(parent_id)"
+  ]
+
+  for sql in indexes.iter {
+    let _ = db.exec(sql)
+  }
+
+  # Migrate existing data: set storage_strength from strength (scale 0-1 to 0-10)
+  # and set retrieval_strength to 0.5 as neutral starting point
+  let data_migration = "UPDATE memories SET storage_strength = strength * 10, retrieval_strength = 0.5 WHERE storage_strength = 0.1"
+  let _ = db.exec(data_migration)
+
+  Result.Ok(nil)
 }
