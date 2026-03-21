@@ -1694,6 +1694,9 @@ fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
 
   let mut count = 0
 
+  # Wrap entire import in a single transaction for atomicity and performance
+  let _ = db.exec("BEGIN")
+
   for mem in memories.iter {
     # Get content from each memory object
     let content_q = mem.query.key("content")
@@ -1724,14 +1727,15 @@ fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
 
       let pin = status == "pinned"
 
-      # Insert the memory
-      match add_memory(db, mem_content, tags, scope, pin) {
+      # Insert the memory (use inner fn to avoid nested transactions)
+      match add_memory_inner(db, mem_content, tags, scope, pin) {
         case Ok(_) -> count = count + 1
         case Error(_) -> { }
       }
     }
   }
 
+  let _ = db.exec("COMMIT")
   Result.Ok(count)
 }
 
