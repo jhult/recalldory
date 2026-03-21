@@ -1557,7 +1557,7 @@ fn export_memories(db: mut Database) -> Result[String, String] {
   }
   stmt.finalize
 
-  result = result + "\n  ], \"exported_at\": \"" + get_timestamp + "\"}"
+  result = result + "\n  ], \"exported_at\": \"" + get_timestamp(db) + "\"}"
   Result.Ok(result)
 }
 
@@ -1633,10 +1633,20 @@ fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
   Result.Ok(count)
 }
 
-fn get_timestamp -> String {
-  # Return current timestamp in ISO format
-  # Using SQLite's datetime function to get consistent format
-  "datetime('now')"
+fn get_timestamp(db: mut Database) -> String {
+  let sql = "SELECT datetime('now')"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(_) -> return ""
+  }
+
+  let result = if stmt.step == SQLITE_ROW {
+    stmt.column_text(0)
+  } else {
+    ""
+  }
+  stmt.finalize
+  result
 }
 
 fn sha256_hash(content: String) -> String {
