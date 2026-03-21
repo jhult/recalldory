@@ -1,2 +1,5 @@
-/build/
-/.inko-recall/
+# Inko dependencies
+/dep
+/build
+
+/.recalldory/
