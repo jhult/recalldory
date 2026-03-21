@@ -327,6 +327,9 @@ fn open_database(global: Bool) -> Result[Database, String] {
   # Run migrations for existing databases
   let _ = migrate_schema(db)
 
+  # Enable WAL mode for better concurrent read/write performance
+  let _ = db.exec("PRAGMA journal_mode=WAL")
+
   Result.Ok(db)
 }
 
@@ -577,16 +580,54 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   }
 
   # Check for near-duplicate using SimHash (Hamming distance <= 3)
-  let near_dup_sql = "SELECT id, access_count, simhash FROM memories WHERE simhash IS NOT NULL AND status != 'superseded'"
+  # Optimization: split 32-bit hash into 4 bands of 8 bits (2 hex chars).
+  # By pigeonhole, if Hamming distance <= 3, at least one band matches exactly.
+  # This filters candidates in SQL instead of scanning all rows.
+  let band1 = simhash_substr(simhash_val, 0, 2)
+  let band2 = simhash_substr(simhash_val, 2, 2)
+  let band3 = simhash_substr(simhash_val, 4, 2)
+  let band4 = simhash_substr(simhash_val, 6, 2)
+
+  let near_dup_sql = "SELECT id, access_count, simhash FROM memories WHERE simhash IS NOT NULL AND status != 'superseded' AND (substr(simhash, 1, 2) = ? OR substr(simhash, 3, 2) = ? OR substr(simhash, 5, 2) = ? OR substr(simhash, 7, 2) = ?)"
   let mut near_dup_stmt = match db.prepare(near_dup_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare near-dup check: ${e}")
+  }
+
+  match near_dup_stmt.bind_text(1, band1) {
+    case Error(e) -> {
+      near_dup_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match near_dup_stmt.bind_text(2, band2) {
+    case Error(e) -> {
+      near_dup_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match near_dup_stmt.bind_text(3, band3) {
+    case Error(e) -> {
+      near_dup_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match near_dup_stmt.bind_text(4, band4) {
+    case Error(e) -> {
+      near_dup_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
   }
 
   let new_simhash_int = hex_to_int(simhash_val)
   let mut near_dup_id: Option[Int] = Option.None
   let mut near_dup_count = 0
 
+  # Fine-grained Hamming distance check on the filtered candidates
   loop {
     let step_result = near_dup_stmt.step
     if step_result == SQLITE_DONE {
@@ -1844,6 +1885,23 @@ fn int_to_hex(val: Int) -> String {
     shift = shift - 4
   }
 
+  result.into_string
+}
+
+# Extract a substring from a hex string (start and len are in chars)
+fn simhash_substr(hex: String, start: Int, len: Int) -> String {
+  let bytes = hex.to_byte_array
+  let mut result = ByteArray.new
+  let end = start + len
+  let mut i = start
+  while i < end {
+    if i >= bytes.size { break }
+    match bytes.get(i) {
+      case Ok(b) -> result.push(b)
+      case Error(_) -> {}
+    }
+    i = i + 1
+  }
   result.into_string
 }
 
