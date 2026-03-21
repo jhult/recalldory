@@ -338,7 +338,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": true, \"id\": ${id}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -348,7 +348,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           output_memories(mems, out)
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -358,7 +358,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           output_memories(mems, out)
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -368,7 +368,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": ${deleted}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -378,7 +378,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": ${pinned}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -388,7 +388,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": ${unpinned}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -398,7 +398,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": ${updated}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -408,7 +408,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"decayed\": ${stats.decayed}, \"anti_patterns\": ${stats.anti_patterns}, \"pruned\": ${stats.pruned}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -418,7 +418,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print(json)
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -428,7 +428,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": true, \"imported\": ${count}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -438,7 +438,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": true}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -448,7 +448,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"total\": ${stats.total}, \"active\": ${stats.active}, \"pinned\": ${stats.pinned}, \"anti_pattern\": ${stats.anti_pattern}, \"avg_strength\": ${(stats.avg_strength as Float).to_string}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -464,7 +464,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"success\": true, \"new_id\": ${new_id}, \"old_id\": ${id}}")
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -474,7 +474,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           output_history(mems, out)
         }
         case Error(e) -> {
-          out.print("{\"error\": \"${e}\"}")
+          out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
     }
@@ -486,7 +486,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
               out.print("{\"success\": ${resolved}, \"resolved_id\": ${rid}}")
             }
             case Error(e) -> {
-              out.print("{\"error\": \"${e}\"}")
+              out.print("{\"error\": \"${escape_json(e)}\"}")
             }
           }
         }
@@ -496,7 +496,7 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
               output_contradictions(mems, out)
             }
             case Error(e) -> {
-              out.print("{\"error\": \"${e}\"}")
+              out.print("{\"error\": \"${escape_json(e)}\"}")
             }
           }
         }
