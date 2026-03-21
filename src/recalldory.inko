@@ -506,6 +506,20 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
 }
 
 fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[Int, String] {
+  let _ = db.exec("BEGIN")
+  match add_memory_inner(db, content, tags, scope, pin) {
+    case Ok(v) -> {
+      let _ = db.exec("COMMIT")
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      let _ = db.exec("ROLLBACK")
+      Result.Error(e)
+    }
+  }
+}
+
+fn add_memory_inner(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[Int, String] {
   let hash = sha256_hash(content)
   let simhash_val = simhash(content)
   let status = if pin { "pinned" } else { "active" }
@@ -904,6 +918,20 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
 }
 
 fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  let _ = db.exec("BEGIN")
+  match forget_memory_inner(db, id) {
+    case Ok(v) -> {
+      let _ = db.exec("COMMIT")
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      let _ = db.exec("ROLLBACK")
+      Result.Error(e)
+    }
+  }
+}
+
+fn forget_memory_inner(db: mut Database, id: Int) -> Result[Bool, String] {
   let sql = "DELETE FROM memories WHERE id = ?"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
@@ -1007,6 +1035,20 @@ fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[B
 
 # Version chain: update a memory by creating a new version
 fn update_memory(db: mut Database, id: Int, content: String, tags: String, scope: String) -> Result[Int, String] {
+  let _ = db.exec("BEGIN")
+  match update_memory_inner(db, id, content, tags, scope) {
+    case Ok(v) -> {
+      let _ = db.exec("COMMIT")
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      let _ = db.exec("ROLLBACK")
+      Result.Error(e)
+    }
+  }
+}
+
+fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String, scope: String) -> Result[Int, String] {
   # Get the old memory to copy metadata
   let get_sql = "SELECT tags, scope FROM memories WHERE id = ?"
   let mut get_stmt = match db.prepare(get_sql) {
