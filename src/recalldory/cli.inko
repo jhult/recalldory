@@ -15,14 +15,42 @@ type pub enum Command {
   case Import(String)
 }
 
-fn pub parse_args -> Option[Command] {
-  let args = env.arguments
+type pub ParsedArgs {
+  let pub @command: Command
+  let pub @global: Bool
+}
+
+impl ParsedArgs {
+  fn pub move into_command -> Command {
+    @command
+  }
+}
+
+fn pub parse_args -> Option[ParsedArgs] {
+  let raw_args = env.arguments
+  let mut global = false
+  let mut args: Array[String] = []
+
+  let mut i = 0
+  while i < raw_args.size {
+    match raw_args.get(i) {
+      case Ok(arg) -> {
+        if arg == "--global" {
+          global = true
+        } else {
+          args.push(arg.clone)
+        }
+      }
+      case Error(_) -> {}
+    }
+    i = i + 1
+  }
 
   if args.size < 1 {
     return Option.None
   }
 
-  match args.get(0) {
+  let cmd = match args.get(0) {
     case Ok(cmd) -> match cmd {
       case "add" -> parse_add(args)
       case "recall" -> parse_recall(args)
@@ -39,6 +67,11 @@ fn pub parse_args -> Option[Command] {
       case _ -> Option.None
     }
     case Error(_) -> Option.None
+  }
+
+  match cmd {
+    case Some(c) -> Option.Some(ParsedArgs(command: c, global: global))
+    case None -> Option.None
   }
 }
 

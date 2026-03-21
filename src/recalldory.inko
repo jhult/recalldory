@@ -1,5 +1,6 @@
-import cli (parse_args, Command)
+import cli (parse_args, Command, ParsedArgs)
 import db (Database, Statement, init_schema, SQLITE_ROW, SQLITE_DONE)
+import std.env
 import std.stdio (Stdout)
 import std.string (StringBuffer, IntoString)
 import std.crypto.sha2 (Sha256)
@@ -12,12 +13,13 @@ type async Main {
   fn async main {
     let out = Stdout.new
 
-    match parse_args() {
-      case Some(cmd) -> {
-        match open_database() {
+    match parse_args {
+      case Some(parsed) -> {
+        let global = parsed.global
+        match open_database(global) {
           case Ok(db) -> {
             let mut database = db
-            handle_command(cmd, database, out)
+            handle_command(parsed.into_command, database, out)
             database.close
           }
           case Error(e) -> {
@@ -32,12 +34,20 @@ type async Main {
   }
 }
 
-fn open_database -> Result[Database, String] {
-  let path = get_db_path
-
-  # Ensure parent directory exists
-  let dir = ".recalldory".to_path
-  dir.create_directory
+fn open_database(global: Bool) -> Result[Database, String] {
+  let path = if global {
+    let home = match env.get("HOME") {
+      case Ok(h) -> h
+      case Error(_) -> return Result.Error("HOME not set")
+    }
+    let dir = "${home}/.recalldory".to_path
+    dir.create_directory
+    "${home}/.recalldory/memory.db"
+  } else {
+    let dir = ".recalldory".to_path
+    dir.create_directory
+    "./.recalldory/memory.db"
+  }
 
   let db = match Database.new(path) {
     case Ok(d) -> d
@@ -53,10 +63,6 @@ fn open_database -> Result[Database, String] {
   }
 
   Result.Ok(db)
-}
-
-fn get_db_path -> String {
-  "./.recalldory/memory.db"
 }
 
 fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
