@@ -1396,6 +1396,24 @@ type pub MaintainStats {
 }
 
 fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, String] {
+  if dry_run {
+    return Result.Ok(MaintainStats(decayed: 0, anti_patterns: 0, pruned: 0))
+  }
+
+  let _ = db.exec("BEGIN")
+  match maintain_memory_inner(db) {
+    case Ok(v) -> {
+      let _ = db.exec("COMMIT")
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      let _ = db.exec("ROLLBACK")
+      Result.Error(e)
+    }
+  }
+}
+
+fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let mut decayed = 0
   let mut anti_patterns = 0
   let mut pruned = 0
@@ -1407,43 +1425,37 @@ fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, Str
 
   # Decay retrieval_strength based on time since last access
   let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
-  if !dry_run {
-    let mut decay_stmt = match db.prepare(decay_sql) {
-      case Ok(s) -> s
-      case Error(e) -> return Result.Error("Failed to prepare decay: ${e}")
-    }
-    let _ = decay_stmt.step
-    decayed = db.changes
-    decay_stmt.finalize
+  let mut decay_stmt = match db.prepare(decay_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare decay: ${e}")
   }
+  let _ = decay_stmt.step
+  decayed = db.changes
+  decay_stmt.finalize
 
   # Mark anti-pattern memories (harmful_count >= 3)
   let anti_sql = "UPDATE memories SET status = 'anti-pattern', is_negative = 1, updated_at = datetime('now') WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
-  if !dry_run {
-    let mut anti_stmt = match db.prepare(anti_sql) {
-      case Ok(s) -> s
-      case Error(e) -> return Result.Error("Failed to prepare anti-pattern: ${e}")
-    }
-    let _ = anti_stmt.step
-    anti_patterns = db.changes
-    anti_stmt.finalize
+  let mut anti_stmt = match db.prepare(anti_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare anti-pattern: ${e}")
   }
+  let _ = anti_stmt.step
+  anti_patterns = db.changes
+  anti_stmt.finalize
 
   # Prune low-strength unpinned memories (using combined score < 0.05)
   # First, delete matching FTS entries before removing from memories
-  if !dry_run {
-    let fts_prune_sql = "DELETE FROM memories_fts WHERE rowid IN (SELECT id FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05)"
-    let _ = db.exec(fts_prune_sql)
+  let fts_prune_sql = "DELETE FROM memories_fts WHERE rowid IN (SELECT id FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05)"
+  let _ = db.exec(fts_prune_sql)
 
-    let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
-    let mut prune_stmt = match db.prepare(prune_sql) {
-      case Ok(s) -> s
-      case Error(e) -> return Result.Error("Failed to prepare prune: ${e}")
-    }
-    let _ = prune_stmt.step
-    pruned = db.changes
-    prune_stmt.finalize
+  let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
+  let mut prune_stmt = match db.prepare(prune_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare prune: ${e}")
   }
+  let _ = prune_stmt.step
+  pruned = db.changes
+  prune_stmt.finalize
 
   Result.Ok(MaintainStats(decayed: decayed, anti_patterns: anti_patterns, pruned: pruned))
 }
