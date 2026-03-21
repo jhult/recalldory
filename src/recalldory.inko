@@ -734,28 +734,35 @@ fn add_memory(db: mut Database, content: String, tags: String, scope: String, pi
     supersede_stmt.finalize
   }
 
-  # Index in FTS5 (rowid will match memory id)
-  let fts_sql = "INSERT INTO memories_fts (content, tags, summary) VALUES (?, ?, ?)"
+  # Index in FTS5 with explicit rowid matching memory id
+  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
   let mut fts_stmt = match db.prepare(fts_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare FTS: ${e}")
   }
 
-  match fts_stmt.bind_text(1, content) {
+  match fts_stmt.bind_int(1, memory_id) {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
     }
     case Ok(_) -> { }
   }
-  match fts_stmt.bind_text(2, tags) {
+  match fts_stmt.bind_text(2, content) {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
     }
     case Ok(_) -> { }
   }
-  match fts_stmt.bind_text(3, "") {
+  match fts_stmt.bind_text(3, tags) {
+    case Error(e) -> {
+      fts_stmt.finalize
+      return Result.Error("Failed to bind FTS: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match fts_stmt.bind_text(4, "") {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
@@ -1105,28 +1112,35 @@ fn update_memory(db: mut Database, id: Int, content: String, tags: String, scope
 
   let new_id = db.last_insert_rowid as Int
 
-  # Index in FTS5
-  let fts_sql = "INSERT INTO memories_fts (content, tags, summary) VALUES (?, ?, ?)"
+  # Index in FTS5 with explicit rowid matching memory id
+  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
   let mut fts_stmt = match db.prepare(fts_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare FTS: ${e}")
   }
 
-  match fts_stmt.bind_text(1, content) {
+  match fts_stmt.bind_int(1, new_id) {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
     }
     case Ok(_) -> { }
   }
-  match fts_stmt.bind_text(2, old_tags) {
+  match fts_stmt.bind_text(2, content) {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
     }
     case Ok(_) -> { }
   }
-  match fts_stmt.bind_text(3, "") {
+  match fts_stmt.bind_text(3, old_tags) {
+    case Error(e) -> {
+      fts_stmt.finalize
+      return Result.Error("Failed to bind FTS: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+  match fts_stmt.bind_text(4, "") {
     case Error(e) -> {
       fts_stmt.finalize
       return Result.Error("Failed to bind FTS: ${e}")
@@ -1657,24 +1671,63 @@ fn sha256_hash(content: String) -> String {
 }
 
 # SimHash for near-duplicate detection
-# Uses a simpler 32-bit hash stored as hex string
+# Uses character 3-gram shingles with weighted bit-vector voting
+# to produce a locality-sensitive 32-bit hash stored as hex string.
 fn simhash(content: String) -> String {
   let bytes = content.to_byte_array
+  let size = bytes.size
 
-  # Use a simple djb2 hash for the content
-  let mut hash1 = 5381
-  let mut hash2 = 0
-
-  for byte in bytes.iter {
-    hash1 = ((hash1 << 5) + hash1) + byte
-    hash2 = ((hash2 << 5) + hash2) ^ byte
+  if size < 3 {
+    # Too short for 3-gram shingling; use SHA256 truncated to 32 bits
+    return simhash_substr(sha256_hash(content), 0, 8)
   }
 
-  # Combine into a fingerprint
-  let combined = hash1 ^ (hash2 * 31)
+  # Collect all shingle hashes first
+  let mut hashes: Array[Int] = []
+  let mut i = 0
+  while i + 2 < size {
+    let b0 = match bytes.get(i) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
+    let b1 = match bytes.get(i + 1) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
+    let b2 = match bytes.get(i + 2) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
 
-  # Convert to hex (8 chars for 32-bit)
-  int_to_hex(combined)
+    # Hash this shingle using FNV-1a (32-bit, wrapping)
+    let mut h = 2166136261
+    h = (h ^ b0).wrapping_mul(16777619)
+    h = (h ^ b1).wrapping_mul(16777619)
+    h = (h ^ b2).wrapping_mul(16777619)
+    hashes.push(h)
+
+    i = i + 1
+  }
+
+  # For each bit position, count votes across all shingle hashes
+  let mut result = 0
+  let mut bit = 0
+  while bit < 32 {
+    let mut count = 0
+    for h in hashes.iter {
+      if (h >> bit) & 1 == 1 {
+        count = count + 1
+      } else {
+        count = count - 1
+      }
+    }
+    if count > 0 {
+      result = result | (1 << bit)
+    }
+    bit = bit + 1
+  }
+
+  int_to_hex(result)
 }
 
 # Simple integer to hex conversion
@@ -1684,12 +1737,7 @@ fn int_to_hex(val: Int) -> String {
 
   # Handle 8 hex digits (32 bits)
   let mut shift = 28
-  let mut v = val
-
-  # Make sure we work with positive values for hex conversion
-  if v < 0 {
-    v = v + 4294967296  # Add 2^32 to handle negative as unsigned
-  }
+  let v = val & 0xFFFFFFFF
 
   while shift >= 0 {
     let nibble = (v >> shift) & 15
@@ -1730,18 +1778,13 @@ fn hex_to_int(hex: String) -> Int {
 
 # Calculate Hamming distance between two hash values
 fn hamming_distance(a: Int, b: Int) -> Int {
-  let xor = a ^ b
+  let val = (a & 0xFFFFFFFF) ^ (b & 0xFFFFFFFF)
   let mut count = 0
-  let mut val = xor
+  let mut v = val
 
-  # Handle negative values (treat as unsigned 32-bit)
-  if val < 0 {
-    val = val + 4294967296
-  }
-
-  while val > 0 {
-    count = count + (val & 1)
-    val = val >> 1
+  while v > 0 {
+    count = count + (v & 1)
+    v = v >> 1
   }
 
   count
