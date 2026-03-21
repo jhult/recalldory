@@ -16,21 +16,96 @@ type async Main {
     match parse_args {
       case Some(parsed) -> {
         let global = parsed.global
-        match open_database(global) {
-          case Ok(db) -> {
-            let mut database = db
-            handle_command(parsed.into_command, database, out)
-            database.close
+        let cmd = parsed.into_command
+        match cmd {
+          case HookPostCompact -> {
+            handle_hook_post_compact(out)
           }
-          case Error(e) -> {
-            out.print("{\"error\": \"${e}\"}")
-          }
+          case Add(a, b, c, d) -> run_with_db(Command.Add(a, b, c, d), global, out)
+          case Recall(a, b, c, d, e, f) -> run_with_db(Command.Recall(a, b, c, d, e, f), global, out)
+          case List(a, b, c) -> run_with_db(Command.List(a, b, c), global, out)
+          case Forget(a) -> run_with_db(Command.Forget(a), global, out)
+          case Pin(a) -> run_with_db(Command.Pin(a), global, out)
+          case Unpin(a) -> run_with_db(Command.Unpin(a), global, out)
+          case Feedback(a, b) -> run_with_db(Command.Feedback(a, b), global, out)
+          case Maintain(a) -> run_with_db(Command.Maintain(a), global, out)
+          case AgentsMd(a) -> run_with_db(Command.AgentsMd(a), global, out)
+          case Stats -> run_with_db(Command.Stats, global, out)
+          case Export -> run_with_db(Command.Export, global, out)
+          case Import(a) -> run_with_db(Command.Import(a), global, out)
         }
       }
       case None -> {
         out.print("{\"error\": \"No command provided\"}")
       }
     }
+  }
+}
+
+fn run_with_db(cmd: Command, global: Bool, out: Stdout) {
+  match open_database(global) {
+    case Ok(db) -> {
+      let mut database = db
+      handle_command(cmd, database, out)
+      database.close
+    }
+    case Error(e) -> {
+      out.print("{\"error\": \"${escape_json(e)}\"}")
+    }
+  }
+}
+
+fn handle_hook_post_compact(out: Stdout) {
+  let mut context = "IMPORTANT: Context was just compacted. Here are your preserved memories:\\n\\n"
+  let mut has_memories = false
+
+  # Query local project memories
+  match open_database(false) {
+    case Ok(db) -> {
+      let mut local_db = db
+      match list_memories(local_db, "", "", 10) {
+        case Ok(mems) -> {
+          if mems.size > 0 {
+            has_memories = true
+            context = context + "## Project Memories\\n"
+            for mem in mems.iter {
+              context = context + "- [" + mem.status + "] " + escape_json(mem.content) + "\\n"
+            }
+            context = context + "\\n"
+          }
+        }
+        case Error(_) -> {}
+      }
+      local_db.close
+    }
+    case Error(_) -> {}
+  }
+
+  # Query global memories
+  match open_database(true) {
+    case Ok(db) -> {
+      let mut global_db = db
+      match list_memories(global_db, "", "", 10) {
+        case Ok(mems) -> {
+          if mems.size > 0 {
+            has_memories = true
+            context = context + "## Global Memories\\n"
+            for mem in mems.iter {
+              context = context + "- [" + mem.status + "] " + escape_json(mem.content) + "\\n"
+            }
+          }
+        }
+        case Error(_) -> {}
+      }
+      global_db.close
+    }
+    case Error(_) -> {}
+  }
+
+  if has_memories {
+    out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"${context}\"}}")
+  } else {
+    out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"\"}}")
   }
 }
 
@@ -177,8 +252,8 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
         }
       }
     }
-    case Stats(verbose) -> {
-      match get_stats(db, verbose) {
+    case Stats -> {
+      match get_stats(db) {
         case Ok(stats) -> {
           out.print("{\"total\": ${stats.total}, \"active\": ${stats.active}, \"pinned\": ${stats.pinned}, \"anti_pattern\": ${stats.anti_pattern}, \"avg_strength\": ${(stats.avg_strength as Float).to_string}}")
         }
@@ -186,6 +261,9 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"error\": \"${e}\"}")
         }
       }
+    }
+    case HookPostCompact -> {
+      # Handled in main before DB open; this branch is unreachable
     }
   }
 }
@@ -604,7 +682,7 @@ type pub MemoryStats {
   let @avg_strength: Float64
 }
 
-fn get_stats(db: mut Database, verbose: Bool) -> Result[MemoryStats, String] {
+fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
   let total_sql = "SELECT COUNT(*) FROM memories"
   let mut total_stmt = match db.prepare(total_sql) {
     case Ok(s) -> s
@@ -971,33 +1049,59 @@ fn output_memories(memories: Array[Memory], out: Stdout) {
 }
 
 fn escape_json(s: String) -> String{
-  let mut result = StringBuffer.new
-  for c in s.chars {
-    match c {
-      case '"' -> {
-        result.push('\\')
-        result.push('"')
+  let hex_chars = "0123456789abcdef".to_byte_array
+  let bytes = s.to_byte_array
+  let mut result = ByteArray.new
+
+  for byte in bytes.iter {
+    if byte == 34 {
+      # " (double quote)
+      result.push(92)
+      result.push(34)
+    } else if byte == 92 {
+      # \ (backslash)
+      result.push(92)
+      result.push(92)
+    } else if byte == 10 {
+      # \n
+      result.push(92)
+      result.push(110)
+    } else if byte == 13 {
+      # \r
+      result.push(92)
+      result.push(114)
+    } else if byte == 9 {
+      # \t
+      result.push(92)
+      result.push(116)
+    } else if byte == 8 {
+      # \b (backspace)
+      result.push(92)
+      result.push(98)
+    } else if byte == 12 {
+      # \f (form feed)
+      result.push(92)
+      result.push(102)
+    } else if byte < 32 {
+      # Other control characters: \u00XX
+      result.push(92)   # \
+      result.push(117)   # u
+      result.push(48)    # 0
+      result.push(48)    # 0
+      let hi = (byte >> 4) & 15
+      let lo = byte & 15
+      match hex_chars.get(hi) {
+        case Ok(h) -> result.push(h)
+        case Error(_) -> result.push(48)
       }
-      case '\\' -> {
-        result.push('\\')
-        result.push('\\')
+      match hex_chars.get(lo) {
+        case Ok(l) -> result.push(l)
+        case Error(_) -> result.push(48)
       }
-      case '\n' -> {
-        result.push('\\')
-        result.push('n')
-      }
-      case '\r' -> {
-        result.push('\\')
-        result.push('r')
-      }
-      case '\t' -> {
-        result.push('\\')
-        result.push('t')
-      }
-      case _ -> {
-        result.push(c)
-      }
+    } else {
+      result.push(byte)
     }
   }
+
   result.into_string
 }

@@ -13,6 +13,7 @@ type pub enum Command {
   case Stats
   case Export
   case Import(String)
+  case HookPostCompact
 }
 
 type pub ParsedArgs {
@@ -64,6 +65,7 @@ fn pub parse_args -> Option[ParsedArgs] {
       case "stats" -> Option.Some(Command.Stats)
       case "export" -> Option.Some(Command.Export)
       case "import" -> parse_import(args)
+      case "hook" -> parse_hook(args)
       case _ -> Option.None
     }
     case Error(_) -> Option.None
@@ -363,6 +365,20 @@ fn parse_import(args: Array[String]) -> Option[Command] {
 
   match args.get(1) {
     case Ok(file) -> Option.Some(Command.Import(file))
+    case Error(_) -> Option.None
+  }
+}
+
+fn parse_hook(args: Array[String]) -> Option[Command] {
+  if args.size < 2 {
+    return Option.None
+  }
+
+  match args.get(1) {
+    case Ok(sub) -> match sub {
+      case "post-compact" -> Option.Some(Command.HookPostCompact)
+      case _ -> Option.None
+    }
     case Error(_) -> Option.None
   }
 }
