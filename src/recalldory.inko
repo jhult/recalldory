@@ -1942,6 +1942,8 @@ fn hamming_distance(a: Int, b: Int) -> Int {
 
 # Check if content contradicts existing memories
 # Returns tuple of (is_contradiction, contradicts_id)
+# Uses FTS5 to find candidate memories sharing key terms, then checks
+# only those candidates for negation-based contradictions.
 fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int]) {
   let content_lower = to_lowercase(content)
   let content_bytes = content_lower.to_byte_array
@@ -1955,11 +1957,35 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
   # Check if new content has negation
   let has_negation = has_negation_words(ref content_bytes)
 
-  # Search for memories with similar entities
-  let search_sql = "SELECT id, content FROM memories WHERE status = 'active'"
+  # Build FTS5 query from entities: "term1 OR term2 OR term3"
+  let mut fts_query = ""
+  let mut first = true
+  for entity in entities.iter {
+    if first {
+      fts_query = entity
+      first = false
+    } else {
+      fts_query = fts_query + " OR " + entity
+    }
+  }
+
+  if fts_query == "" {
+    return (false, Option.None)
+  }
+
+  # Use FTS5 to find candidate memories sharing terms
+  let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = 'active'"
   let mut stmt = match db.prepare(search_sql) {
     case Ok(s) -> s
     case Error(_) -> return (false, Option.None)
+  }
+
+  match stmt.bind_text(1, fts_query) {
+    case Error(_) -> {
+      stmt.finalize
+      return (false, Option.None)
+    }
+    case Ok(_) -> { }
   }
 
   loop {
@@ -1976,7 +2002,7 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
     let mem_lower = to_lowercase(mem_content)
     let mem_bytes = mem_lower.to_byte_array
 
-    # Check for entity overlap
+    # Check for entity overlap (FTS may return partial matches)
     let mem_entities = extract_entities(ref mem_bytes)
     let overlap_count = count_entity_overlap(ref entities, ref mem_entities)
 
