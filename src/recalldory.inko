@@ -861,49 +861,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   # Contradiction is flagged but old memory is NOT auto-superseded.
   # The caller receives contradiction info and can decide what to do
   # (e.g., use `contradictions --resolve` to clear the flag).
-
-  # Index in FTS5 with explicit rowid matching memory id
-  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
-  let mut fts_stmt = match db.prepare(fts_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare FTS: ${e}")
-  }
-
-  match fts_stmt.bind_int(1, memory_id) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(2, content) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(3, tags) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(4, "") {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-
-  let fts_result = fts_stmt.step
-  fts_stmt.finalize
-
-  if fts_result != SQLITE_DONE {
-    return Result.Error("FTS indexing failed")
-  }
+  # FTS5 is auto-synced via triggers — no manual indexing needed.
 
   Result.Ok(AddResult(id: memory_id, deduplicated: false, contradiction: is_contradiction, contradicts_id: raw_contradicts_id))
 }
@@ -1110,24 +1068,7 @@ fn forget_memory_inner(db: mut Database, id: Int) -> Result[Bool, String] {
   stmt.finalize
 
   let deleted = db.changes > 0
-
-  # Clean up FTS entry
-  if deleted {
-    let fts_sql = "DELETE FROM memories_fts WHERE rowid = ?"
-    let mut fts_stmt = match db.prepare(fts_sql) {
-      case Ok(s) -> s
-      case Error(e) -> return Result.Error("Failed to clean FTS: ${e}")
-    }
-    match fts_stmt.bind_int(1, id) {
-      case Error(e) -> {
-        fts_stmt.finalize
-        return Result.Error("Failed to bind FTS: ${e}")
-      }
-      case Ok(_) -> { }
-    }
-    let _ = fts_stmt.step
-    fts_stmt.finalize
-  }
+  # FTS5 is auto-synced via DELETE trigger — no manual cleanup needed.
 
   Result.Ok(deleted)
 }
@@ -1273,22 +1214,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
   let _ = supersede_stmt.step
   supersede_stmt.finalize
-
-  # Clean up FTS entry for superseded memory
-  let fts_del_sql = "DELETE FROM memories_fts WHERE rowid = ?"
-  let mut fts_del_stmt = match db.prepare(fts_del_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare FTS cleanup: ${e}")
-  }
-  match fts_del_stmt.bind_int(1, id) {
-    case Error(e) -> {
-      fts_del_stmt.finalize
-      return Result.Error("Failed to bind FTS cleanup: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  let _ = fts_del_stmt.step
-  fts_del_stmt.finalize
+  # FTS5 is auto-synced via UPDATE trigger — no manual cleanup needed.
 
   # Create new memory with parent_id pointing to old memory
   let hash = sha256_hash(content)
@@ -1350,49 +1276,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
 
   let new_id = db.last_insert_rowid as Int
-
-  # Index in FTS5 with explicit rowid matching memory id
-  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
-  let mut fts_stmt = match db.prepare(fts_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare FTS: ${e}")
-  }
-
-  match fts_stmt.bind_int(1, new_id) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(2, content) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(3, old_tags) {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-  match fts_stmt.bind_text(4, "") {
-    case Error(e) -> {
-      fts_stmt.finalize
-      return Result.Error("Failed to bind FTS: ${e}")
-    }
-    case Ok(_) -> { }
-  }
-
-  let fts_result = fts_stmt.step
-  fts_stmt.finalize
-
-  if fts_result != SQLITE_DONE {
-    return Result.Error("FTS indexing failed")
-  }
+  # FTS5 is auto-synced via INSERT trigger — no manual indexing needed.
 
   Result.Ok(new_id)
 }
@@ -1650,10 +1534,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   anti_stmt.finalize
 
   # Prune low-strength unpinned memories (using combined score < 0.05)
-  # First, delete matching FTS entries before removing from memories
-  let fts_prune_sql = "DELETE FROM memories_fts WHERE rowid IN (SELECT id FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05)"
-  let _ = db.exec(fts_prune_sql)
-
+  # FTS5 is auto-synced via DELETE trigger — no manual cleanup needed.
   let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
   let mut prune_stmt = match db.prepare(prune_sql) {
     case Ok(s) -> s
@@ -1698,69 +1579,25 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
 }
 
 fn rebuild_fts(db: mut Database) -> Result[Int, String] {
-  # Drop and recreate FTS table
-  let _ = db.exec("DROP TABLE IF EXISTS memories_fts")
-  match db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary)") {
-    case Error(e) -> return Result.Error("Failed to create FTS table: ${e}")
+  # Content-synced FTS5 supports a simple rebuild command
+  match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
+    case Error(e) -> return Result.Error("Failed to rebuild FTS: ${e}")
     case Ok(_) -> {}
   }
 
-  # Re-populate from memories table
-  let sql = "SELECT id, content, tags, summary FROM memories"
+  # Return count of indexed memories
+  let sql = "SELECT COUNT(*) FROM memories"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error("Failed to count: ${e}")
   }
 
-  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
-  let mut fts_stmt = match db.prepare(fts_sql) {
-    case Ok(s) -> s
-    case Error(e) -> {
-      stmt.finalize
-      return Result.Error("Failed to prepare FTS insert: ${e}")
-    }
+  let count = if stmt.step == SQLITE_ROW {
+    stmt.column_int(0)
+  } else {
+    0
   }
-
-  let mut count = 0
-  loop {
-    let step_result = stmt.step
-    if step_result == SQLITE_DONE { break }
-    if step_result != SQLITE_ROW {
-      stmt.finalize
-      fts_stmt.finalize
-      return Result.Error("Query failed during rebuild")
-    }
-
-    let id = stmt.column_int(0)
-    let content = stmt.column_text(1)
-    let tags = stmt.column_text(2)
-    let summary = stmt.column_text(3)
-
-    match fts_stmt.bind_int(1, id) {
-      case Error(_) -> {}
-      case Ok(_) -> {}
-    }
-    match fts_stmt.bind_text(2, content) {
-      case Error(_) -> {}
-      case Ok(_) -> {}
-    }
-    match fts_stmt.bind_text(3, tags) {
-      case Error(_) -> {}
-      case Ok(_) -> {}
-    }
-    match fts_stmt.bind_text(4, summary) {
-      case Error(_) -> {}
-      case Ok(_) -> {}
-    }
-
-    if fts_stmt.step == SQLITE_DONE {
-      count = count + 1
-    }
-    let _ = fts_stmt.reset
-  }
-
   stmt.finalize
-  fts_stmt.finalize
 
   Result.Ok(count)
 }

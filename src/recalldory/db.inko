@@ -376,12 +376,30 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       UNIQUE(content_hash)
     );
 
-    -- FTS5 for keyword search (standalone table)
+    -- Content-synced FTS5 for keyword search
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       tags,
-      summary
+      summary,
+      content=memories,
+      content_rowid=id
     );
+
+    -- Triggers to keep FTS index in sync with memories table
+    CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content, tags, summary)
+        VALUES (new.id, new.content, new.tags, COALESCE(new.summary, ''));
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary)
+        VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, ''));
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary)
+        VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, ''));
+      INSERT INTO memories_fts(rowid, content, tags, summary)
+        VALUES (new.id, new.content, new.tags, COALESCE(new.summary, ''));
+    END;
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
@@ -427,6 +445,61 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   # and set retrieval_strength to 0.5 as neutral starting point
   let data_migration = "UPDATE memories SET storage_strength = strength * 10, retrieval_strength = 0.5 WHERE storage_strength = 0.1"
   let _ = db.exec(data_migration)
+
+  # Migrate standalone FTS5 to content-synced FTS5 if needed
+  let _ = migrate_fts(db)
+
+  Result.Ok(nil)
+}
+
+# Migrate standalone FTS5 table to content-synced with triggers.
+# Checks for the presence of sync triggers to determine if migration is needed.
+fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
+  let check_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='memories_fts_ai'"
+  let mut check_stmt = match db.prepare(check_sql) {
+    case Ok(s) -> s
+    case Error(_) -> return Result.Ok(nil)
+  }
+
+  let has_triggers = if check_stmt.step == SQLITE_ROW {
+    check_stmt.column_int(0) > 0
+  } else {
+    false
+  }
+  check_stmt.finalize
+
+  if has_triggers {
+    return Result.Ok(nil)
+  }
+
+  # Drop old standalone FTS table
+  let _ = db.exec("DROP TABLE IF EXISTS memories_fts")
+
+  # Create content-synced FTS table
+  match db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary, content=memories, content_rowid=id)") {
+    case Error(e) -> return Result.Error("Failed to create FTS table: ${e}")
+    case Ok(_) -> {}
+  }
+
+  # Create sync triggers
+  match db.exec("CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags, summary) VALUES (new.id, new.content, new.tags, COALESCE(new.summary, '')); END") {
+    case Error(e) -> return Result.Error("Failed to create trigger: ${e}")
+    case Ok(_) -> {}
+  }
+  match db.exec("CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary) VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, '')); END") {
+    case Error(e) -> return Result.Error("Failed to create trigger: ${e}")
+    case Ok(_) -> {}
+  }
+  match db.exec("CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary) VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, '')); INSERT INTO memories_fts(rowid, content, tags, summary) VALUES (new.id, new.content, new.tags, COALESCE(new.summary, '')); END") {
+    case Error(e) -> return Result.Error("Failed to create trigger: ${e}")
+    case Ok(_) -> {}
+  }
+
+  # Rebuild FTS index from existing data
+  match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
+    case Error(e) -> return Result.Error("Failed to rebuild FTS: ${e}")
+    case Ok(_) -> {}
+  }
 
   Result.Ok(nil)
 }
