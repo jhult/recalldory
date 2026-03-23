@@ -1008,7 +1008,32 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   Result.Ok(results)
 }
 
+fn memory_exists(db: mut Database, id: Int) -> Result[Bool, String] {
+  let sql = "SELECT 1 FROM memories WHERE id = ?"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  match stmt.bind_int(1, id) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> { }
+  }
+
+  let exists = stmt.step == SQLITE_ROW
+  stmt.finalize
+  Result.Ok(exists)
+}
+
 fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  match memory_exists(db, id) {
+    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
+    case Error(e) -> return Result.Error(e)
+    case _ -> {}
+  }
   let _ = db.exec("BEGIN")
   match forget_memory_inner(db, id) {
     case Ok(v) -> {
@@ -1064,6 +1089,11 @@ fn forget_memory_inner(db: mut Database, id: Int) -> Result[Bool, String] {
 }
 
 fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  match memory_exists(db, id) {
+    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
+    case Error(e) -> return Result.Error(e)
+    case _ -> {}
+  }
   let sql = "UPDATE memories SET status = 'pinned', updated_at = datetime('now') WHERE id = ? AND status != 'pinned'"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
@@ -1083,7 +1113,12 @@ fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   Result.Ok(db.changes > 0)
 }
 
-fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String]{
+fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
+  match memory_exists(db, id) {
+    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
+    case Error(e) -> return Result.Error(e)
+    case _ -> {}
+  }
   let sql = "UPDATE memories SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'pinned'"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
@@ -1104,6 +1139,11 @@ fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String]{
 }
 
 fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
+  match memory_exists(db, id) {
+    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
+    case Error(e) -> return Result.Error(e)
+    case _ -> {}
+  }
   let sql = if feedback_type == "helpful" {
     "UPDATE memories SET helpful_count = helpful_count + 1, updated_at = datetime('now') WHERE id = ?"
   } else if feedback_type == "harmful" {
