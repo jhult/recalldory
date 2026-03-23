@@ -594,12 +594,12 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match stmt.bind_text(1, hash) {
+  match bind_text(mut stmt, 1, hash) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut existing_id: Option[Int] = Option.None
@@ -637,33 +637,33 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
     case Error(e) -> return Result.Error("Failed to prepare near-dup check: ${e}")
   }
 
-  match near_dup_stmt.bind_text(1, band1) {
+  match bind_text(mut near_dup_stmt, 1, band1) {
+    case Ok(_) -> {}
     case Error(e) -> {
       near_dup_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match near_dup_stmt.bind_text(2, band2) {
+  match bind_text(mut near_dup_stmt, 2, band2) {
+    case Ok(_) -> {}
     case Error(e) -> {
       near_dup_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match near_dup_stmt.bind_text(3, band3) {
+  match bind_text(mut near_dup_stmt, 3, band3) {
+    case Ok(_) -> {}
     case Error(e) -> {
       near_dup_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match near_dup_stmt.bind_text(4, band4) {
+  match bind_text(mut near_dup_stmt, 4, band4) {
+    case Ok(_) -> {}
     case Error(e) -> {
       near_dup_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let new_simhash_int = hex_to_int(simhash_val)
@@ -725,70 +725,70 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match insert_stmt.bind_text(1, content) {
+  match bind_text(mut insert_stmt, 1, content) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(2, hash) {
+  match bind_text(mut insert_stmt, 2, hash) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(3, tags) {
+  match bind_text(mut insert_stmt, 3, tags) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(4, scope) {
+  match bind_text(mut insert_stmt, 4, scope) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(5, status) {
+  match bind_text(mut insert_stmt, 5, status) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(6, simhash_val) {
+  match bind_text(mut insert_stmt, 6, simhash_val) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_int(7, if is_contradiction { 1 } else { 0 }) {
+  match bind_int(mut insert_stmt, 7, if is_contradiction { 1 } else { 0 }) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
   if has_contradicts {
-    match insert_stmt.bind_int(8, contradicts_id_val) {
+    match bind_int(mut insert_stmt, 8, contradicts_id_val) {
+      case Ok(_) -> {}
       case Error(e) -> {
         insert_stmt.finalize
-        return Result.Error("Failed to bind: ${e}")
+        return Result.Error(e)
       }
-      case Ok(_) -> { }
     }
   } else {
-    match insert_stmt.bind_null(8) {
+    match bind_null(mut insert_stmt, 8) {
+      case Ok(_) -> {}
       case Error(e) -> {
         insert_stmt.finalize
-        return Result.Error("Failed to bind: ${e}")
+        return Result.Error(e)
       }
-      case Ok(_) -> { }
     }
   }
 
@@ -832,31 +832,31 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
 
   let mut idx = 1
   if scope_filter != "" {
-    match stmt.bind_text(idx, scope_filter) {
+    match bind_text(mut stmt, idx, scope_filter) {
+      case Ok(_) -> {}
       case Error(e) -> {
         stmt.finalize
-        return Result.Error("Failed to bind: ${e}")
+        return Result.Error(e)
       }
-      case Ok(_) -> { }
     }
     idx = idx + 1
   }
   if status_filter != ""{
-    match stmt.bind_text(idx, status_filter) {
+    match bind_text(mut stmt, idx, status_filter) {
+      case Ok(_) -> {}
       case Error(e) -> {
         stmt.finalize
-        return Result.Error("Failed to bind: ${e}")
+        return Result.Error(e)
       }
-      case Ok(_) -> { }
     }
     idx = idx + 1
   }
-  match stmt.bind_int(idx, limit) {
+  match bind_int(mut stmt, idx, limit) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut results = []
@@ -897,31 +897,31 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
     stmt.finalize
     return Result.Ok([])
   }
-  match stmt.bind_text(1, safe_query) {
+  match bind_text(mut stmt, 1, safe_query) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut idx = 2
   if scope_filter != "" {
-    match stmt.bind_text(idx, scope_filter) {
+    match bind_text(mut stmt, idx, scope_filter) {
+      case Ok(_) -> {}
       case Error(e) -> {
         stmt.finalize
-        return Result.Error("Failed to bind: ${e}")
+        return Result.Error(e)
       }
-      case Ok(_) -> { }
     }
     idx = idx + 1
   }
-  match stmt.bind_int(idx, limit) {
+  match bind_int(mut stmt, idx, limit) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut results = []
@@ -959,6 +959,30 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
 
 # Execute a SQL statement with a single integer bind parameter.
 # Returns the number of rows changed.
+# Bind a text parameter, finalizing the statement on error.
+fn bind_text(db_stmt: mut Statement, idx: Int, val: String) -> Result[Nil, String] {
+  match db_stmt.bind_text(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error("Failed to bind: ${e}")
+  }
+}
+
+# Bind an int parameter, finalizing the statement on error.
+fn bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
+  match db_stmt.bind_int(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error("Failed to bind: ${e}")
+  }
+}
+
+# Bind a null parameter, finalizing the statement on error.
+fn bind_null(db_stmt: mut Statement, idx: Int) -> Result[Nil, String] {
+  match db_stmt.bind_null(idx) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error("Failed to bind: ${e}")
+  }
+}
+
 # Execute a SQL statement, returning an error on failure.
 fn exec_sql(db: mut Database, sql: String) -> Result[Nil, String] {
   match db.exec(sql) {
@@ -1021,12 +1045,12 @@ fn memory_exists(db: mut Database, id: Int) -> Result[Bool, String] {
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match stmt.bind_int(1, id) {
+  match bind_int(mut stmt, 1, id) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let exists = stmt.step == SQLITE_ROW
@@ -1035,11 +1059,6 @@ fn memory_exists(db: mut Database, id: Int) -> Result[Bool, String] {
 }
 
 fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
   match exec_sql(db, "BEGIN") {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
@@ -1065,11 +1084,6 @@ fn forget_memory_inner(db: mut Database, id: Int) -> Result[Bool, String] {
 }
 
 fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
   match exec_with_int(db, "UPDATE memories SET status = 'pinned', updated_at = datetime('now') WHERE id = ? AND status != 'pinned'", id) {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
@@ -1077,11 +1091,6 @@ fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
 }
 
 fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
   match exec_with_int(db, "UPDATE memories SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'pinned'", id) {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
@@ -1089,11 +1098,6 @@ fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
 }
 
 fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
   let sql = if feedback_type == "helpful" {
     "UPDATE memories SET helpful_count = helpful_count + 1, updated_at = datetime('now') WHERE id = ?"
   } else if feedback_type == "harmful" {
@@ -1144,12 +1148,12 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match get_stmt.bind_int(1, id) {
+  match bind_int(mut get_stmt, 1, id) {
+    case Ok(_) -> {}
     case Error(e) -> {
       get_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut old_tags = tags
@@ -1172,19 +1176,19 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
-  match coll_stmt.bind_text(1, hash) {
+  match bind_text(mut coll_stmt, 1, hash) {
+    case Ok(_) -> {}
     case Error(e) -> {
       coll_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> {}
   }
-  match coll_stmt.bind_int(2, id) {
+  match bind_int(mut coll_stmt, 2, id) {
+    case Ok(_) -> {}
     case Error(e) -> {
       coll_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> {}
   }
   let has_collision = coll_stmt.step == SQLITE_ROW
   coll_stmt.finalize
@@ -1207,47 +1211,47 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match insert_stmt.bind_text(1, content) {
+  match bind_text(mut insert_stmt, 1, content) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(2, hash) {
+  match bind_text(mut insert_stmt, 2, hash) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(3, old_tags) {
+  match bind_text(mut insert_stmt, 3, old_tags) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(4, old_scope) {
+  match bind_text(mut insert_stmt, 4, old_scope) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_text(5, simhash_val) {
+  match bind_text(mut insert_stmt, 5, simhash_val) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
-  match insert_stmt.bind_int(6, id) {
+  match bind_int(mut insert_stmt, 6, id) {
+    case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let result = insert_stmt.step
@@ -1280,12 +1284,12 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match stmt.bind_int(1, id) {
+  match bind_int(mut stmt, 1, id) {
+    case Ok(_) -> {}
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error(e)
     }
-    case Ok(_) -> { }
   }
 
   let mut current_id: Option[Int] = Option.None
