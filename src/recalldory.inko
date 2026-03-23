@@ -1636,6 +1636,10 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
 }
 
 fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
+  # Validate path to prevent traversal attacks
+  if contains_substring(path, "..") {
+    return Result.Error("Path must not contain '..'")
+  }
   # Get all pinned memories to include in AGENTS.md
   let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
@@ -2128,6 +2132,47 @@ fn sanitize_fts5_query(query: String) -> String {
 
   result.push(34) # closing "
   result.into_string
+}
+
+# Check if a string contains a substring
+fn contains_substring(haystack: String, needle: String) -> Bool {
+  let h_bytes = haystack.to_byte_array
+  let n_bytes = needle.to_byte_array
+  let h_len = h_bytes.size
+  let n_len = n_bytes.size
+
+  if n_len == 0 { return true }
+  if n_len > h_len { return false }
+
+  let mut i = 0
+  while i + n_len <= h_len {
+    let mut matched = true
+    let mut j = 0
+    while j < n_len {
+      let h_byte = match h_bytes.get(i + j) {
+        case Ok(b) -> b
+        case Error(_) -> {
+          matched = false
+          break
+        }
+      }
+      let n_byte = match n_bytes.get(j) {
+        case Ok(b) -> b
+        case Error(_) -> {
+          matched = false
+          break
+        }
+      }
+      if h_byte != n_byte {
+        matched = false
+        break
+      }
+      j = j + 1
+    }
+    if matched { return true }
+    i = i + 1
+  }
+  false
 }
 
 fn to_lowercase(s: String) -> String {
