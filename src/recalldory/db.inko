@@ -327,6 +327,46 @@ fn pub to_cstr(s: ref String) -> ByteArray {
   bytes
 }
 
+# Check if an FTS5 CREATE TABLE SQL string contains the content= option
+fn fts_sql_has_content_option(sql: String) -> Bool {
+  let h_bytes = sql.to_byte_array
+  let n_bytes = "content=".to_byte_array
+  let h_len = h_bytes.size
+  let n_len = n_bytes.size
+
+  if n_len > h_len { return false }
+
+  let mut i = 0
+  while i + n_len <= h_len {
+    let mut matched = true
+    let mut j = 0
+    while j < n_len {
+      let h_byte = match h_bytes.get(i + j) {
+        case Ok(b) -> b
+        case Error(_) -> {
+          matched = false
+          break
+        }
+      }
+      let n_byte = match n_bytes.get(j) {
+        case Ok(b) -> b
+        case Error(_) -> {
+          matched = false
+          break
+        }
+      }
+      if h_byte != n_byte {
+        matched = false
+        break
+      }
+      j = j + 1
+    }
+    if matched { return true }
+    i = i + 1
+  }
+  false
+}
+
 fn pointer_to_string(ptr: Pointer[UInt8]) -> String {
   if ptr as Int == 0 {
     return ""
@@ -377,6 +417,9 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
     );
 
     -- Content-synced FTS5 for keyword search
+    -- NOTE: Triggers are created by migrate_fts() to handle both new
+    -- and existing databases correctly (avoids creating triggers on
+    -- standalone FTS tables during migration).
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       tags,
@@ -384,22 +427,6 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       content=memories,
       content_rowid=id
     );
-
-    -- Triggers to keep FTS index in sync with memories table
-    CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
-      INSERT INTO memories_fts(rowid, content, tags, summary)
-        VALUES (new.id, new.content, new.tags, COALESCE(new.summary, ''));
-    END;
-    CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
-      INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary)
-        VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, ''));
-    END;
-    CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
-      INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary)
-        VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, ''));
-      INSERT INTO memories_fts(rowid, content, tags, summary)
-        VALUES (new.id, new.content, new.tags, COALESCE(new.summary, ''));
-    END;
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(status);
@@ -452,36 +479,63 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   Result.Ok(nil)
 }
 
-# Migrate standalone FTS5 table to content-synced with triggers.
-# Checks for the presence of sync triggers to determine if migration is needed.
+# Ensure content-synced FTS5 with triggers is set up.
+# For new databases: creates triggers for the content-synced FTS table.
+# For existing databases: detects standalone FTS, drops it, recreates
+# as content-synced, adds triggers, and rebuilds the index.
 fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
-  let check_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='memories_fts_ai'"
+  # Check if all 3 sync triggers already exist (fully migrated)
+  let check_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('memories_fts_ai', 'memories_fts_ad', 'memories_fts_au')"
   let mut check_stmt = match db.prepare(check_sql) {
     case Ok(s) -> s
     case Error(_) -> return Result.Ok(nil)
   }
 
-  let has_triggers = if check_stmt.step == SQLITE_ROW {
-    check_stmt.column_int(0) > 0
+  let trigger_count = if check_stmt.step == SQLITE_ROW {
+    check_stmt.column_int(0)
   } else {
-    false
+    0
   }
   check_stmt.finalize
 
-  if has_triggers {
+  if trigger_count == 3 {
     return Result.Ok(nil)
   }
 
-  # Drop old standalone FTS table
-  let _ = db.exec("DROP TABLE IF EXISTS memories_fts")
-
-  # Create content-synced FTS table
-  match db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary, content=memories, content_rowid=id)") {
-    case Error(e) -> return Result.Error("Failed to create FTS table: ${e}")
-    case Ok(_) -> {}
+  # Check if the existing FTS table is standalone (not content-synced).
+  # If standalone, we must drop and recreate it.
+  let fts_check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+  let mut fts_stmt = match db.prepare(fts_check_sql) {
+    case Ok(s) -> s
+    case Error(_) -> return Result.Ok(nil)
   }
 
-  # Create sync triggers
+  let mut need_recreate = false
+  if fts_stmt.step == SQLITE_ROW {
+    let fts_sql = fts_stmt.column_text(0)
+    # Standalone FTS tables don't have content= in their definition.
+    # Simple check: content-synced FTS SQL contains "content="
+    if !fts_sql_has_content_option(fts_sql) {
+      need_recreate = true
+    }
+  }
+  fts_stmt.finalize
+
+  if need_recreate {
+    # Drop any partial triggers from a broken migration
+    let _ = db.exec("DROP TRIGGER IF EXISTS memories_fts_ai")
+    let _ = db.exec("DROP TRIGGER IF EXISTS memories_fts_ad")
+    let _ = db.exec("DROP TRIGGER IF EXISTS memories_fts_au")
+
+    # Drop old standalone FTS table and recreate as content-synced
+    let _ = db.exec("DROP TABLE IF EXISTS memories_fts")
+    match db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary, content=memories, content_rowid=id)") {
+      case Error(e) -> return Result.Error("Failed to create FTS table: ${e}")
+      case Ok(_) -> {}
+    }
+  }
+
+  # Create sync triggers (idempotent with IF NOT EXISTS)
   match db.exec("CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags, summary) VALUES (new.id, new.content, new.tags, COALESCE(new.summary, '')); END") {
     case Error(e) -> return Result.Error("Failed to create trigger: ${e}")
     case Ok(_) -> {}
@@ -495,10 +549,12 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
     case Ok(_) -> {}
   }
 
-  # Rebuild FTS index from existing data
-  match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
-    case Error(e) -> return Result.Error("Failed to rebuild FTS: ${e}")
-    case Ok(_) -> {}
+  # Rebuild FTS index if we recreated the table
+  if need_recreate {
+    match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
+      case Error(e) -> return Result.Error("Failed to rebuild FTS: ${e}")
+      case Ok(_) -> {}
+    }
   }
 
   Result.Ok(nil)
