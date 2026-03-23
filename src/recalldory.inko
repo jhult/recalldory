@@ -337,8 +337,16 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
   match cmd {
     case Add(content, tags, scope, pin) -> {
       match add_memory(db, content, tags, scope, pin) {
-        case Ok(id) -> {
-          out.print("{\"success\": true, \"id\": ${id}}")
+        case Ok(result) -> {
+          let dedup = if result.deduplicated { "true" } else { "false" }
+          let contra = if result.contradiction { "true" } else { "false" }
+          let mut json = "{\"success\": true, \"id\": ${result.id}, \"deduplicated\": ${dedup}, \"contradiction\": ${contra}"
+          match result.contradicts_id {
+            case Some(cid) -> json = json + ", \"contradicts_id\": ${cid}"
+            case None -> {}
+          }
+          json = json + "}"
+          out.print(json)
         }
         case Error(e) -> {
           out.print("{\"error\": \"${escape_json(e)}\"}")
@@ -513,7 +521,14 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
   }
 }
 
-fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[Int, String] {
+type pub AddResult {
+  let @id: Int
+  let @deduplicated: Bool
+  let @contradiction: Bool
+  let @contradicts_id: Option[Int]
+}
+
+fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
   let _ = db.exec("BEGIN")
   match add_memory_inner(db, content, tags, scope, pin) {
     case Ok(v) -> {
@@ -527,7 +542,7 @@ fn add_memory(db: mut Database, content: String, tags: String, scope: String, pi
   }
 }
 
-fn add_memory_inner(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[Int, String] {
+fn add_memory_inner(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
   let hash = sha256_hash(content)
   let simhash_val = simhash(content)
   let status = if pin { "pinned" } else { "active" }
@@ -579,7 +594,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       }
       let _ = update_stmt.step
       update_stmt.finalize
-      return Result.Ok(id)
+      return Result.Ok(AddResult(id: id, deduplicated: true, contradiction: false, contradicts_id: Option.None))
     }
     case None -> { }
   }
@@ -683,7 +698,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       }
       let _ = update_stmt.step
       update_stmt.finalize
-      return Result.Ok(id)
+      return Result.Ok(AddResult(id: id, deduplicated: true, contradiction: false, contradicts_id: Option.None))
     }
     case None -> { }
   }
@@ -780,19 +795,9 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
 
   let memory_id = db.last_insert_rowid as Int
 
-  # If contradiction found, supersede the old memory
-  if is_contradiction and has_contradicts {
-    let supersede_sql = "UPDATE memories SET status = 'superseded', updated_at = datetime('now') WHERE id = ?"
-    let mut supersede_stmt = match db.prepare(supersede_sql) {
-      case Ok(s) -> s
-      case Error(_) -> return Result.Ok(memory_id)
-    }
-    match supersede_stmt.bind_int(1, contradicts_id_val) {
-      case Error(_) -> {}
-      case Ok(_) -> { let _ = supersede_stmt.step }
-    }
-    supersede_stmt.finalize
-  }
+  # Contradiction is flagged but old memory is NOT auto-superseded.
+  # The caller receives contradiction info and can decide what to do
+  # (e.g., use `contradictions --resolve` to clear the flag).
 
   # Index in FTS5 with explicit rowid matching memory id
   let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
@@ -837,7 +842,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
     return Result.Error("FTS indexing failed")
   }
 
-  Result.Ok(memory_id)
+  Result.Ok(AddResult(id: memory_id, deduplicated: false, contradiction: is_contradiction, contradicts_id: raw_contradicts_id))
 }
 
 fn list_memories(db: mut Database, scope_filter: String, status_filter: String, limit: Int) -> Result[Array[Memory], String] {
@@ -966,18 +971,20 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   stmt.finalize
 
   # Update last_accessed and retrieval_strength for returned memories
+  # Prepare statement once and rebind/reset for each row
+  let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id = ?"
+  let mut touch_stmt = match db.prepare(touch_sql) {
+    case Ok(s) -> s
+    case Error(_) -> return Result.Ok(results)
+  }
   for mem in results.iter {
-    let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id = ?"
-    let mut touch_stmt = match db.prepare(touch_sql) {
-      case Ok(s) -> s
-      case Error(_) -> next
-    }
     match touch_stmt.bind_int(1, mem.id) {
       case Ok(_) -> { let _ = touch_stmt.step }
       case Error(_) -> {}
     }
-    touch_stmt.finalize
+    let _ = touch_stmt.reset
   }
+  touch_stmt.finalize
 
   Result.Ok(results)
 }
