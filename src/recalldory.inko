@@ -100,7 +100,7 @@ fn handle_hook_post_compact(out: Stdout) {
             has_memories = true
             context = context + "## Project Memories\\n"
             for mem in mems.iter {
-              context = context + "- [" + mem.status + "] " + escape_json(mem.content) + "\\n"
+              context = context + "- [" + escape_json(mem.status) + "] " + escape_json(mem.content) + "\\n"
             }
             context = context + "\\n"
           }
@@ -122,7 +122,7 @@ fn handle_hook_post_compact(out: Stdout) {
             has_memories = true
             context = context + "## Global Memories\\n"
             for mem in mems.iter {
-              context = context + "- [" + mem.status + "] " + escape_json(mem.content) + "\\n"
+              context = context + "- [" + escape_json(mem.status) + "] " + escape_json(mem.content) + "\\n"
             }
           }
         }
@@ -559,14 +559,17 @@ type pub AddResult {
 }
 
 fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
-  let _ = db.exec("BEGIN")
+  match exec_sql(db, "BEGIN") {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
   match add_memory_inner(db, content, tags, scope, pin) {
     case Ok(v) -> {
-      let _ = db.exec("COMMIT")
+      let _ = exec_sql(db, "COMMIT")
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = db.exec("ROLLBACK")
+      let _ = exec_sql(db, "ROLLBACK")
       Result.Error(e)
     }
   }
@@ -952,6 +955,14 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
 
 # Execute a SQL statement with a single integer bind parameter.
 # Returns the number of rows changed.
+# Execute a SQL statement, returning an error on failure.
+fn exec_sql(db: mut Database, sql: String) -> Result[Nil, String] {
+  match db.exec(sql) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error(e)
+  }
+}
+
 fn exec_with_int(db: mut Database, sql: String, value: Int) -> Result[Int, String] {
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
@@ -1025,14 +1036,17 @@ fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
     case Error(e) -> return Result.Error(e)
     case _ -> {}
   }
-  let _ = db.exec("BEGIN")
+  match exec_sql(db, "BEGIN") {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
   match forget_memory_inner(db, id) {
     case Ok(v) -> {
-      let _ = db.exec("COMMIT")
+      let _ = exec_sql(db, "COMMIT")
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = db.exec("ROLLBACK")
+      let _ = exec_sql(db, "ROLLBACK")
       Result.Error(e)
     }
   }
@@ -1092,14 +1106,17 @@ fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[B
 
 # Version chain: update a memory by creating a new version
 fn update_memory(db: mut Database, id: Int, content: String, tags: String, scope: String) -> Result[Int, String] {
-  let _ = db.exec("BEGIN")
+  match exec_sql(db, "BEGIN") {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
   match update_memory_inner(db, id, content, tags, scope) {
     case Ok(v) -> {
-      let _ = db.exec("COMMIT")
+      let _ = exec_sql(db, "COMMIT")
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = db.exec("ROLLBACK")
+      let _ = exec_sql(db, "ROLLBACK")
       Result.Error(e)
     }
   }
@@ -1144,6 +1161,33 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
   get_stmt.finalize
 
+  # Check for content_hash collision before superseding old memory
+  let hash = sha256_hash(content)
+  let collision_sql = "SELECT 1 FROM memories WHERE content_hash = ? AND id != ?"
+  let mut coll_stmt = match db.prepare(collision_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  match coll_stmt.bind_text(1, hash) {
+    case Error(e) -> {
+      coll_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> {}
+  }
+  match coll_stmt.bind_int(2, id) {
+    case Error(e) -> {
+      coll_stmt.finalize
+      return Result.Error("Failed to bind: ${e}")
+    }
+    case Ok(_) -> {}
+  }
+  let has_collision = coll_stmt.step == SQLITE_ROW
+  coll_stmt.finalize
+  if has_collision {
+    return Result.Error("A memory with identical content already exists")
+  }
+
   # Mark old memory as superseded
   # FTS5 is auto-synced via UPDATE trigger — no manual cleanup needed.
   match exec_with_int(db, "UPDATE memories SET status = 'superseded', updated_at = datetime('now') WHERE id = ?", id) {
@@ -1152,7 +1196,6 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
 
   # Create new memory with parent_id pointing to old memory
-  let hash = sha256_hash(content)
   let simhash_val = simhash(content)
   let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, parent_id) VALUES (?, ?, ?, ?, 'active', ?, ?)"
   let mut insert_stmt = match db.prepare(insert_sql) {
@@ -1375,14 +1418,17 @@ fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, Str
     return maintain_memory_preview(db)
   }
 
-  let _ = db.exec("BEGIN")
+  match exec_sql(db, "BEGIN") {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
   match maintain_memory_inner(db) {
     case Ok(v) -> {
-      let _ = db.exec("COMMIT")
+      let _ = exec_sql(db, "COMMIT")
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = db.exec("ROLLBACK")
+      let _ = exec_sql(db, "ROLLBACK")
       Result.Error(e)
     }
   }
@@ -1534,6 +1580,13 @@ fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   # Validate path to prevent traversal attacks
   if contains_substring(path, "..") {
     return Result.Error("Path must not contain '..'")
+  }
+  let path_bytes = path.to_byte_array
+  if path_bytes.size > 0 {
+    match path_bytes.get(0) {
+      case Ok(47) -> return Result.Error("Absolute paths are not allowed")
+      case _ -> {}
+    }
   }
   # Get all pinned memories to include in AGENTS.md
   let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
@@ -1695,14 +1748,17 @@ fn import_memories(db: mut Database, file: String) -> Result[ImportResult, Strin
     case None -> return Result.Error("'memories' is not an array")
   }
 
-  let _ = db.exec("BEGIN")
+  match exec_sql(db, "BEGIN") {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
   match import_memories_inner(db, memories) {
     case Ok(v) -> {
-      let _ = db.exec("COMMIT")
+      let _ = exec_sql(db, "COMMIT")
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = db.exec("ROLLBACK")
+      let _ = exec_sql(db, "ROLLBACK")
       Result.Error(e)
     }
   }
