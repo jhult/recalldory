@@ -1631,67 +1631,26 @@ type pub MemoryStats {
 }
 
 fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
-  let total_sql = "SELECT COUNT(*) FROM memories"
-  let mut total_stmt = match db.prepare(total_sql) {
+  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'anti-pattern' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
+  let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
-  let total = if total_stmt.step == SQLITE_ROW {
-    total_stmt.column_int(0)
-  } else {
-    0
-  }
-  total_stmt.finalize
 
-  let active_sql = "SELECT COUNT(*) FROM memories WHERE status = 'active'"
-  let mut active_stmt = match db.prepare(active_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
-  }
-  let active = if active_stmt.step == SQLITE_ROW {
-    active_stmt.column_int(0)
+  let result = if stmt.step == SQLITE_ROW {
+    MemoryStats(
+      total: stmt.column_int(0),
+      active: stmt.column_int(1),
+      pinned: stmt.column_int(2),
+      anti_pattern: stmt.column_int(3),
+      avg_strength: stmt.column_double(4)
+    )
   } else {
-    0
+    MemoryStats(total: 0, active: 0, pinned: 0, anti_pattern: 0, avg_strength: 0.0 as Float64)
   }
-  active_stmt.finalize
+  stmt.finalize
 
-  let pinned_sql = "SELECT COUNT(*) FROM memories WHERE status = 'pinned'"
-  let mut pinned_stmt = match db.prepare(pinned_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
-  }
-  let pinned = if pinned_stmt.step == SQLITE_ROW {
-    pinned_stmt.column_int(0)
-  } else {
-    0
-  }
-  pinned_stmt.finalize
-
-  let anti_sql = "SELECT COUNT(*) FROM memories WHERE status = 'anti-pattern'"
-  let mut anti_stmt = match db.prepare(anti_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
-  }
-  let anti_pattern = if anti_stmt.step == SQLITE_ROW {
-    anti_stmt.column_int(0)
-  } else {
-    0
-  }
-  anti_stmt.finalize
-
-  let avg_sql = "SELECT AVG(strength) FROM memories"
-  let mut avg_stmt = match db.prepare(avg_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
-  }
-  let avg_strength = if avg_stmt.step == SQLITE_ROW {
-    avg_stmt.column_double(0)
-  } else {
-    0.0 as Float64
-  }
-  avg_stmt.finalize
-
-  Result.Ok(MemoryStats(total: total, active: active, pinned: pinned, anti_pattern: anti_pattern, avg_strength: avg_strength))
+  Result.Ok(result)
 }
 
 fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
