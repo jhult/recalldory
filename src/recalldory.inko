@@ -1665,8 +1665,7 @@ fn export_memories(db: mut Database) -> Result[String, String] {
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  let mut result = "{\"memories\": [\n"
-  let mut first = true
+  let mut items: Array[Json] = []
 
   loop {
     let step_result = stmt.step
@@ -1678,35 +1677,31 @@ fn export_memories(db: mut Database) -> Result[String, String] {
       return Result.Error("Query failed")
     }
 
-    if first {
-      first = false
-    } else {
-      result = result + ",\n"
-    }
-
-    let id = stmt.column_int(0)
-    let content = escape_json(stmt.column_text(1))
-    let content_hash = stmt.column_text(2)
-    let summary = escape_json(stmt.column_text(3))
-    let tags = escape_json(stmt.column_text(4))
-    let scope = stmt.column_text(5)
-    let status = stmt.column_text(6)
-    let is_negative = stmt.column_int(7)
-    let strength = stmt.column_double(8)
-    let access_count = stmt.column_int(9)
-    let decay_rate = stmt.column_double(10)
-    let helpful_count = stmt.column_int(11)
-    let harmful_count = stmt.column_int(12)
-    let created_at = stmt.column_text(13)
-    let updated_at = stmt.column_text(14)
-    let last_accessed = stmt.column_text(15)
-
-    result = result + "    {\"id\": ${id}, \"content\": \"${content}\", \"content_hash\": \"${content_hash}\", \"summary\": \"${summary}\", \"tags\": \"${tags}\", \"scope\": \"${scope}\", \"status\": \"${status}\", \"is_negative\": ${is_negative}, \"strength\": ${(strength as Float).to_string}, \"access_count\": ${access_count}, \"decay_rate\": ${(decay_rate as Float).to_string}, \"helpful_count\": ${helpful_count}, \"harmful_count\": ${harmful_count}, \"created_at\": \"${created_at}\", \"updated_at\": \"${updated_at}\", \"last_accessed\": \"${last_accessed}\"}"
+    let mut obj: Map[String, Json] = Map.new
+    obj.set("id", Json.Int(stmt.column_int(0)))
+    obj.set("content", Json.String(stmt.column_text(1)))
+    obj.set("content_hash", Json.String(stmt.column_text(2)))
+    obj.set("summary", Json.String(stmt.column_text(3)))
+    obj.set("tags", Json.String(stmt.column_text(4)))
+    obj.set("scope", Json.String(stmt.column_text(5)))
+    obj.set("status", Json.String(stmt.column_text(6)))
+    obj.set("is_negative", Json.Int(stmt.column_int(7)))
+    obj.set("strength", Json.Float(stmt.column_double(8) as Float))
+    obj.set("access_count", Json.Int(stmt.column_int(9)))
+    obj.set("decay_rate", Json.Float(stmt.column_double(10) as Float))
+    obj.set("helpful_count", Json.Int(stmt.column_int(11)))
+    obj.set("harmful_count", Json.Int(stmt.column_int(12)))
+    obj.set("created_at", Json.String(stmt.column_text(13)))
+    obj.set("updated_at", Json.String(stmt.column_text(14)))
+    obj.set("last_accessed", Json.String(stmt.column_text(15)))
+    items.push(Json.Object(obj))
   }
   stmt.finalize
 
-  result = result + "\n  ], \"exported_at\": \"" + get_timestamp(db) + "\"}"
-  Result.Ok(result)
+  let mut root: Map[String, Json] = Map.new
+  root.set("memories", Json.Array(items))
+  root.set("exported_at", Json.String(get_timestamp(db)))
+  Result.Ok(Json.Object(root).to_pretty_string)
 }
 
 type pub ImportResult {
@@ -2315,23 +2310,23 @@ impl Memory {
 }
 
 fn output_memories(memories: Array[Memory], out: Stdout) {
-  let mut first = true
-  out.print("{\"results\": [")
+  let mut results: Array[Json] = []
 
   for memory in memories.iter {
-    if first {
-      first = false
-    } else {
-      out.print(",")
-    }
-
-    let neg_val = if memory.xflag { "true" } else { "false" }
-    # Use similarity if available (from search), otherwise use strength
     let score = if (memory.similarity as Float) > 0.0 { memory.similarity } else { memory.strength }
-    out.print("{\"id\": ${memory.id}, \"summary\": \"${escape_json(memory.content)}\", \"score\": ${(score as Float).to_string}, \"tags\": \"${escape_json(memory.tags)}\", \"status\": \"${memory.status}\", \"negative_flag\": ${neg_val}}")
+    let mut obj: Map[String, Json] = Map.new
+    obj.set("id", Json.Int(memory.id))
+    obj.set("summary", Json.String(memory.content))
+    obj.set("score", Json.Float(score as Float))
+    obj.set("tags", Json.String(memory.tags))
+    obj.set("status", Json.String(memory.status))
+    obj.set("negative_flag", Json.Bool(memory.xflag))
+    results.push(Json.Object(obj))
   }
 
-  out.print("]}")
+  let mut root: Map[String, Json] = Map.new
+  root.set("results", Json.Array(results))
+  out.print(Json.Object(root).to_string)
 }
 
 fn escape_json(s: String) -> String{
@@ -2393,45 +2388,42 @@ fn escape_json(s: String) -> String{
 }
 
 fn output_history(memories: Array[Memory], out: Stdout) {
-  let mut first = true
-  out.print("{\"versions\": [")
+  let mut versions: Array[Json] = []
 
   for memory in memories.iter {
-    if first {
-      first = false
-    } else {
-      out.print(",")
+    let mut obj: Map[String, Json] = Map.new
+    obj.set("id", Json.Int(memory.id))
+    obj.set("content", Json.String(memory.content))
+    obj.set("status", Json.String(memory.status))
+    match memory.parent_id {
+      case Some(pid) -> obj.set("parent_id", Json.Int(pid))
+      case None -> obj.set("parent_id", Json.Null)
     }
-
-    let parent_str = match memory.parent_id {
-      case Some(pid) -> "\"${pid}\""
-      case None -> "null"
-    }
-
-    out.print("{\"id\": ${memory.id}, \"content\": \"${escape_json(memory.content)}\", \"status\": \"${memory.status}\", \"parent_id\": ${parent_str}, \"created_at\": \"${memory.created_at}\"}")
+    obj.set("created_at", Json.String(memory.created_at))
+    versions.push(Json.Object(obj))
   }
 
-  out.print("]}")
+  let mut root: Map[String, Json] = Map.new
+  root.set("versions", Json.Array(versions))
+  out.print(Json.Object(root).to_string)
 }
 
 fn output_contradictions(memories: Array[Memory], out: Stdout) {
-  let mut first = true
-  out.print("{\"contradictions\": [")
+  let mut items: Array[Json] = []
 
   for memory in memories.iter {
-    if first {
-      first = false
-    } else {
-      out.print(",")
+    let mut obj: Map[String, Json] = Map.new
+    obj.set("id", Json.Int(memory.id))
+    obj.set("content", Json.String(memory.content))
+    match memory.contradicts_id {
+      case Some(cid) -> obj.set("contradicts_id", Json.Int(cid))
+      case None -> obj.set("contradicts_id", Json.Null)
     }
-
-    let contradicts_str = match memory.contradicts_id {
-      case Some(cid) -> "\"${cid}\""
-      case None -> "null"
-    }
-
-    out.print("{\"id\": ${memory.id}, \"content\": \"${escape_json(memory.content)}\", \"contradicts_id\": ${contradicts_str}, \"created_at\": \"${memory.created_at}\"}")
+    obj.set("created_at", Json.String(memory.created_at))
+    items.push(Json.Object(obj))
   }
 
-  out.print("]}")
+  let mut root: Map[String, Json] = Map.new
+  root.set("contradictions", Json.Array(items))
+  out.print(Json.Object(root).to_string)
 }
