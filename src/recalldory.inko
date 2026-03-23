@@ -14,7 +14,7 @@ import std.io (Buffer, Write)
 import std.map (Map)
 
 # Common SQL column list for memory queries
-let MEMORY_COLUMNS = "id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed"
+let MEMORY_COLUMNS = "id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength"
 
 # Common words to ignore for entity extraction
 let COMMON_WORDS = ["the", "that", "this", "with", "from", "have", "been", "were",
@@ -876,7 +876,7 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
 fn search_memories(db: mut Database, query: String, scope_filter: String, limit: Int) -> Result[Array[Memory], String] {
   # Use FTS5 for full-text search with bm25 ranking
   # Include bm25 score for combined scoring
-  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status NOT IN ('superseded', 'anti-pattern')"
+  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, m.storage_strength, m.retrieval_strength, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status NOT IN ('superseded', 'anti-pattern')"
 
   if scope_filter != "" {
     sql = sql + " AND m.scope = ?"
@@ -2238,8 +2238,8 @@ impl Memory {
       similarity: similarity,
       parent_id: parent_id,
       contradicts_id: contradicts_id,
-      storage_strength: 0.1 as Float64,
-      retrieval_strength: 1.0 as Float64,
+      storage_strength: stmt.column_double(16),
+      retrieval_strength: stmt.column_double(17),
       is_contradiction: is_contradiction
     )
   }
@@ -2249,17 +2249,17 @@ impl Memory {
   }
 
   fn pub static from_row_with_score(stmt: ref Statement) -> Memory {
-    build(stmt, stmt.column_double(16), Option.None, Option.None, false)
+    build(stmt, stmt.column_double(18), Option.None, Option.None, false)
   }
 
   fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
-    let parent = stmt.column_int(16)
+    let parent = stmt.column_int(18)
     let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
     build(stmt, 0.0 as Float64, pid, Option.None, false)
   }
 
   fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
-    let contradicts = stmt.column_int(16)
+    let contradicts = stmt.column_int(18)
     let cid = if contradicts > 0 { Option.Some(contradicts) } else { Option.None }
     build(stmt, 0.0 as Float64, Option.None, cid, true)
   }

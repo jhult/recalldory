@@ -94,13 +94,20 @@ impl Database {
     let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
     free(db_ptr_addr)
 
-    Result.Ok(Database(handle: db_ptr, path: path))
+    let db = Database(handle: db_ptr, path: path)
+
+    # Set busy timeout so SQLite retries automatically on lock contention
+    let _ = db.exec("PRAGMA busy_timeout = 5000")
+
+    Result.Ok(db)
   }
 
   fn pub mut close {
     if @handle as Int != 0 {
-      sqlite3_close(@handle)
-      @handle = 0 as Pointer[UInt8]
+      let result = sqlite3_close(@handle)
+      if (result as Int) == 0 {
+        @handle = 0 as Pointer[UInt8]
+      }
     }
   }
 
@@ -162,7 +169,7 @@ impl Database {
     sqlite3_changes(@handle) as Int
   }
 
-  fn pub mut enable_load_extension(enable: Bool) -> Result[Nil, String] {
+  fn mut enable_load_extension(enable: Bool) -> Result[Nil, String] {
     let onoff = if enable { 1 } else { 0 }
     let result = sqlite3_enable_load_extension(@handle, onoff as Int32)
 
@@ -173,7 +180,7 @@ impl Database {
     Result.Ok(nil)
   }
 
-  fn pub mut load_extension(path: String) -> Result[Nil, String] {
+  fn mut load_extension(path: String) -> Result[Nil, String] {
     let path_bytes = to_cstr(path)
     let errmsg_addr = malloc(8 as UInt64)
 
