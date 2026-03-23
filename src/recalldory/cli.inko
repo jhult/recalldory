@@ -1,5 +1,21 @@
 import std.env
 
+# Valid scope values
+let VALID_SCOPES = ['project', 'global', 'user']
+
+fn validate_scope(scope: String) -> Bool {
+  let mut valid = false
+
+  for s in VALID_SCOPES.iter {
+    if s == scope {
+      valid = true
+      break
+    }
+  }
+
+  valid
+}
+
 # Commands that require a database connection
 type pub enum DbCommand {
   case Add(String, String, String, Bool)
@@ -45,17 +61,15 @@ fn pub parse_args -> Option[ParsedArgs] {
   let mut args: Array[String] = []
 
   let mut i = 0
+
   while i < raw_args.size {
     match raw_args.get(i) {
       case Ok(arg) -> {
-        if arg == "--global" {
-          global = true
-        } else {
-          args.push(arg.clone)
-        }
+        if arg == '--global' { global = true } else { args.push(arg.clone) }
       }
       case Error(_) -> {}
     }
+
     i = i + 1
   }
 
@@ -64,28 +78,30 @@ fn pub parse_args -> Option[ParsedArgs] {
   }
 
   let cmd = match args.get(0) {
-    case Ok(cmd) -> match cmd {
-      case "--help" -> Option.Some(Command.Help)
-      case "-h" -> Option.Some(Command.Help)
-      case "help" -> Option.Some(Command.Help)
-      case "add" -> parse_add(args)
-      case "recall" -> parse_recall(args)
-      case "list" -> parse_list(args)
-      case "forget" -> parse_forget(args)
-      case "pin" -> parse_pin(args)
-      case "unpin" -> parse_unpin(args)
-      case "feedback" -> parse_feedback(args)
-      case "maintain" -> parse_maintain(args)
-      case "agents-md" -> parse_agents_md(args)
-      case "stats" -> Option.Some(Command.Db(DbCommand.Stats))
-      case "export" -> Option.Some(Command.Db(DbCommand.Export))
-      case "import" -> parse_import(args)
-      case "hook" -> parse_hook(args)
-      case "update" -> parse_update(args)
-      case "history" -> parse_history(args)
-      case "contradictions" -> parse_contradictions(args)
-      case "rebuild-fts" -> Option.Some(Command.Db(DbCommand.RebuildFts))
-      case _ -> Option.None
+    case Ok(cmd) -> {
+      match cmd {
+        case '--help' -> Option.Some(Command.Help)
+        case '-h' -> Option.Some(Command.Help)
+        case 'help' -> Option.Some(Command.Help)
+        case 'add' -> parse_add(args)
+        case 'recall' -> parse_recall(args)
+        case 'list' -> parse_list(args)
+        case 'forget' -> parse_forget(args)
+        case 'pin' -> parse_pin(args)
+        case 'unpin' -> parse_unpin(args)
+        case 'feedback' -> parse_feedback(args)
+        case 'maintain' -> parse_maintain(args)
+        case 'agents-md' -> parse_agents_md(args)
+        case 'stats' -> Option.Some(Command.Db(DbCommand.Stats))
+        case 'export' -> Option.Some(Command.Db(DbCommand.Export))
+        case 'import' -> parse_import(args)
+        case 'hook' -> parse_hook(args)
+        case 'update' -> parse_update(args)
+        case 'history' -> parse_history(args)
+        case 'contradictions' -> parse_contradictions(args)
+        case 'rebuild-fts' -> Option.Some(Command.Db(DbCommand.RebuildFts))
+        case _ -> Option.None
+      }
     }
     case Error(_) -> Option.None
   }
@@ -97,24 +113,23 @@ fn pub parse_args -> Option[ParsedArgs] {
 }
 
 fn parse_add(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   let content = match args.get(1) {
     case Ok(c) -> c
     case Error(_) -> return Option.None
   }
 
-  let mut tags = ""
-  let mut scope = "project"
+  let mut tags = ''
+  let mut scope = 'project'
   let mut pin = false
 
   let mut i = 2
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--tags" and i + 1 < args.size {
+        if arg == '--tags' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(t) -> {
               tags = t
@@ -122,7 +137,7 @@ fn parse_add(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--scope" and i + 1 < args.size {
+        } else if arg == '--scope' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               scope = s
@@ -130,7 +145,7 @@ fn parse_add(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--pin" {
+        } else if arg == '--pin' {
           pin = true
           i = i + 1
         } else {
@@ -141,27 +156,29 @@ fn parse_add(args: Array[String]) -> Option[Command] {
     }
   }
 
+  # Validate scope
+  if !validate_scope(scope) { return Option.None }
+
   Option.Some(Command.Db(DbCommand.Add(content, tags, scope, pin)))
 }
 
 fn parse_recall(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   let query = match args.get(1) {
     case Ok(q) -> q
     case Error(_) -> return Option.None
   }
 
-  let mut scope = ""
+  let mut scope = ''
   let mut top = 10
 
   let mut i = 2
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--scope" and i + 1 < args.size {
+        if arg == '--scope' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               scope = s
@@ -169,13 +186,14 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--top" and i + 1 < args.size {
+        } else if arg == '--top' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(t) -> {
               match int_parse(t) {
                 case Some(v) -> top = v
-                case None -> { }
+                case None -> {}
               }
+
               i = i + 2
             }
             case Error(_) -> i = i + 1
@@ -188,19 +206,24 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
     }
   }
 
+  if scope != '' {
+    if !validate_scope(scope) { return Option.None }
+  }
+
   Option.Some(Command.Db(DbCommand.Recall(query, scope, top)))
 }
 
 fn parse_list(args: Array[String]) -> Option[Command] {
-  let mut scope = ""
-  let mut status = ""
+  let mut scope = ''
+  let mut status = ''
   let mut limit = 50
 
   let mut i = 1
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--scope" and i + 1 < args.size {
+        if arg == '--scope' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               scope = s
@@ -208,7 +231,7 @@ fn parse_list(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--status" and i + 1 < args.size {
+        } else if arg == '--status' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               status = s
@@ -216,13 +239,14 @@ fn parse_list(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--limit" and i + 1 < args.size {
+        } else if arg == '--limit' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(l) -> {
               match int_parse(l) {
                 case Some(v) -> limit = v
-                case None -> { }
+                case None -> {}
               }
+
               i = i + 2
             }
             case Error(_) -> i = i + 1
@@ -235,13 +259,17 @@ fn parse_list(args: Array[String]) -> Option[Command] {
     }
   }
 
+  if scope != '' {
+    if !validate_scope(scope) { return Option.None }
+  }
+
+  if status != '' and !validate_status(status) { return Option.None }
+
   Option.Some(Command.Db(DbCommand.List(scope, status, limit)))
 }
 
 fn parse_forget(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
     case Ok(id_str) -> {
@@ -255,9 +283,7 @@ fn parse_forget(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_pin(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
     case Ok(id_str) -> {
@@ -271,9 +297,7 @@ fn parse_pin(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_unpin(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
     case Ok(id_str) -> {
@@ -287,14 +311,14 @@ fn parse_unpin(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_feedback(args: Array[String]) -> Option[Command] {
-  if args.size < 3 {
-    return Option.None
-  }
+  if args.size < 3 { return Option.None }
 
   let id = match args.get(1) {
-    case Ok(id_str) -> match int_parse(id_str) {
-      case Some(i) -> i
-      case None -> return Option.None
+    case Ok(id_str) -> {
+      match int_parse(id_str) {
+        case Some(i) -> i
+        case None -> return Option.None
+      }
     }
     case Error(_) -> return Option.None
   }
@@ -304,6 +328,8 @@ fn parse_feedback(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
+  if !validate_feedback_type(feedback_type) { return Option.None }
+
   Option.Some(Command.Db(DbCommand.Feedback(id, feedback_type)))
 }
 
@@ -311,15 +337,13 @@ fn parse_maintain(args: Array[String]) -> Option[Command] {
   let mut dry_run = false
 
   let mut i = 1
+
   while i < args.size {
     match args.get(i) {
-      case Ok(arg) -> {
-        if arg == "--dry-run" {
-          dry_run = true
-        }
-      }
-      case Error(_) -> { }
+      case Ok(arg) -> if arg == '--dry-run' { dry_run = true }
+      case Error(_) -> {}
     }
+
     i = i + 1
   }
 
@@ -327,13 +351,14 @@ fn parse_maintain(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_agents_md(args: Array[String]) -> Option[Command] {
-  let mut path = "."
+  let mut path = '.'
 
   let mut i = 1
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--path" and i + 1 < args.size {
+        if arg == '--path' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(p) -> {
               path = p
@@ -353,9 +378,7 @@ fn parse_agents_md(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_import(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
     case Ok(file) -> Option.Some(Command.Db(DbCommand.Import(file)))
@@ -364,22 +387,22 @@ fn parse_import(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_hook(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
-    case Ok(sub) -> match sub {
-      case "post-compact" -> Option.Some(Command.HookPostCompact)
-      case "install" -> Option.Some(Command.HookInstall)
-      case _ -> Option.None
+    case Ok(sub) -> {
+      match sub {
+        case 'post-compact' -> Option.Some(Command.HookPostCompact)
+        case 'install' -> Option.Some(Command.HookInstall)
+        case _ -> Option.None
+      }
     }
     case Error(_) -> Option.None
   }
 }
 
 fn int_parse(s: String) -> Option[Int] {
-  let mut result = 0
+  let mut result: Int = 0
   let mut valid = false
   let mut negative = false
   let bytes = s.to_byte_array
@@ -401,10 +424,38 @@ fn int_parse(s: String) -> Option[Int] {
       case Ok(byte) -> {
         if byte >= 48 and byte <= 57 {
           let digit = byte - 48
-          # Check for overflow: result * 10 + digit must not exceed Int max
-          if result > 922337203685477580 or (result == 922337203685477580 and digit > 7) {
-            return Option.None
+
+          # Check for overflow before computing result * 10 + digit
+          # Int.MAX = 9223372036854775807, Int.MIN = -9223372036854775808
+          if negative {
+            # For negative numbers, Int.MIN (-9223372036854775808) is the limit
+            # Special case: when result == 922337203685477580 and digit == 8,
+            # we'd compute 9223372036854775808 which overflows Int.MAX.
+            # Return Int.MIN directly in this case.
+            if result == 922337203685477580 and digit == 8 {
+              # Ensure this is the last digit
+              if i + 1 == bytes.size {
+                return Option.Some(-9223372036854775808)
+              } else {
+                return Option.None
+              }
+            }
+            if result > 922337203685477580 {
+              return Option.None
+            }
+            if result == 922337203685477580 and digit > 8 {
+              return Option.None
+            }
+          } else {
+            # For positive numbers, Int.MAX (9223372036854775807) is the limit
+            if result > 922337203685477580 {
+              return Option.None
+            }
+            if result == 922337203685477580 and digit > 7 {
+              return Option.None
+            }
           }
+
           valid = true
           result = result * 10 + digit
         } else {
@@ -413,6 +464,7 @@ fn int_parse(s: String) -> Option[Int] {
       }
       case Error(_) -> return Option.None
     }
+
     i = i + 1
   }
 
@@ -428,28 +480,28 @@ fn int_parse(s: String) -> Option[Int] {
 }
 
 fn parse_update(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   let id = match args.get(1) {
-    case Ok(id_str) -> match int_parse(id_str) {
-      case Some(i) -> i
-      case None -> return Option.None
+    case Ok(id_str) -> {
+      match int_parse(id_str) {
+        case Some(i) -> i
+        case None -> return Option.None
+      }
     }
     case Error(_) -> return Option.None
   }
 
   # Support both positional content and --content flag
-  let mut content = ""
-  let mut tags = ""
-  let mut scope = ""
-  let mut positional_content = ""
+  let mut content = ''
+  let mut tags = ''
+  let mut scope = ''
+  let mut positional_content = ''
 
   # Check if arg 2 is a flag or positional content
   match args.get(2) {
     case Ok(arg) -> {
-      if arg == "--content" or arg == "--tags" or arg == "--scope" {
+      if arg == '--content' or arg == '--tags' or arg == '--scope' {
         # It's a flag, no positional content
       } else {
         positional_content = arg
@@ -458,11 +510,12 @@ fn parse_update(args: Array[String]) -> Option[Command] {
     case Error(_) -> {}
   }
 
-  let mut i = if positional_content != "" { 3 } else { 2 }
+  let mut i = if positional_content != '' { 3 } else { 2 }
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--content" and i + 1 < args.size {
+        if arg == '--content' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(c) -> {
               content = c
@@ -470,7 +523,7 @@ fn parse_update(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--tags" and i + 1 < args.size {
+        } else if arg == '--tags' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(t) -> {
               tags = t
@@ -478,7 +531,7 @@ fn parse_update(args: Array[String]) -> Option[Command] {
             }
             case Error(_) -> i = i + 1
           }
-        } else if arg == "--scope" and i + 1 < args.size {
+        } else if arg == '--scope' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(s) -> {
               scope = s
@@ -495,20 +548,20 @@ fn parse_update(args: Array[String]) -> Option[Command] {
   }
 
   # --content flag takes priority over positional content
-  let final_content = if content != "" { content } else { positional_content }
+  let final_content = if content != '' { content } else { positional_content }
 
   # Need at least content to update
-  if final_content == "" and tags == "" and scope == "" {
-    return Option.None
+  if final_content == '' and tags == '' and scope == '' { return Option.None }
+
+  if scope != '' {
+    if !validate_scope(scope) { return Option.None }
   }
 
   Option.Some(Command.Db(DbCommand.Update(id, final_content, tags, scope)))
 }
 
 fn parse_history(args: Array[String]) -> Option[Command] {
-  if args.size < 2 {
-    return Option.None
-  }
+  if args.size < 2 { return Option.None }
 
   match args.get(1) {
     case Ok(id_str) -> {
@@ -525,13 +578,18 @@ fn parse_contradictions(args: Array[String]) -> Option[Command] {
   let mut resolve_id: Option[Int] = Option.None
 
   let mut i = 1
+
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--resolve" and i + 1 < args.size {
+        if arg == '--resolve' and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(id_str) -> {
-              resolve_id = int_parse(id_str)
+              match int_parse(id_str) {
+                case Some(id) -> resolve_id = Option.Some(id)
+                case None -> return Option.None
+              }
+
               i = i + 2
             }
             case Error(_) -> i = i + 1

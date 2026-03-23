@@ -1590,13 +1590,6 @@ fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   if contains_substring(path, "..") {
     return Result.Error("Path must not contain '..'")
   }
-  let path_bytes = path.to_byte_array
-  if path_bytes.size > 0 {
-    match path_bytes.get(0) {
-      case Ok(47) -> return Result.Error("Absolute paths are not allowed")
-      case _ -> {}
-    }
-  }
   # Get all pinned memories to include in AGENTS.md
   let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
