@@ -1142,7 +1142,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
 
   # Get the old memory to copy metadata
-  let get_sql = "SELECT tags, scope FROM memories WHERE id = ?"
+  let get_sql = "SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?"
   let mut get_stmt = match db.prepare(get_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
@@ -1158,6 +1158,8 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
 
   let mut old_tags = tags
   let mut old_scope = scope
+  let mut old_contradiction = 0
+  let mut old_contradicts_id: Option[Int] = Option.None
 
   if get_stmt.step == SQLITE_ROW {
     if tags == "" {
@@ -1165,6 +1167,11 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
     }
     if scope == "" {
       old_scope = get_stmt.column_text(1)
+    }
+    old_contradiction = get_stmt.column_int(2)
+    let contradicts_raw = get_stmt.column_int(3)
+    if contradicts_raw > 0 {
+      old_contradicts_id = Option.Some(contradicts_raw)
     }
   }
   get_stmt.finalize
@@ -1205,7 +1212,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
 
   # Create new memory with parent_id pointing to old memory
   let simhash_val = simhash(content)
-  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, parent_id) VALUES (?, ?, ?, ?, 'active', ?, ?)"
+  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, parent_id, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)"
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
@@ -1251,6 +1258,33 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
     case Error(e) -> {
       insert_stmt.finalize
       return Result.Error(e)
+    }
+  }
+  match bind_int(mut insert_stmt, 7, old_contradiction) {
+    case Ok(_) -> {}
+    case Error(e) -> {
+      insert_stmt.finalize
+      return Result.Error(e)
+    }
+  }
+  match old_contradicts_id {
+    case Some(cid) -> {
+      match bind_int(mut insert_stmt, 8, cid) {
+        case Ok(_) -> {}
+        case Error(e) -> {
+          insert_stmt.finalize
+          return Result.Error(e)
+        }
+      }
+    }
+    case None -> {
+      match bind_null(mut insert_stmt, 8) {
+        case Ok(_) -> {}
+        case Error(e) -> {
+          insert_stmt.finalize
+          return Result.Error(e)
+        }
+      }
     }
   }
 
@@ -1590,6 +1624,18 @@ fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   if contains_substring(path, "..") {
     return Result.Error("Path must not contain '..'")
   }
+  # Block absolute paths except /tmp for testing
+  if path.size > 0 {
+    let path_bytes = path.to_byte_array
+    match path_bytes.get(0) {
+      case Ok(47) -> {
+        if !contains_substring(path, "/tmp") {
+          return Result.Error("Absolute paths are not allowed (except /tmp)")
+        }
+      }
+      case _ -> {}
+    }
+  }
   # Get all pinned memories to include in AGENTS.md
   let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
@@ -1705,6 +1751,8 @@ fn export_memories(db: mut Database) -> Result[String, String] {
     obj.set("created_at", Json.String(stmt.column_text(13)))
     obj.set("updated_at", Json.String(stmt.column_text(14)))
     obj.set("last_accessed", Json.String(stmt.column_text(15)))
+    obj.set("storage_strength", Json.Float(stmt.column_double(16) as Float))
+    obj.set("retrieval_strength", Json.Float(stmt.column_double(17) as Float))
     items.push(Json.Object(obj))
   }
   stmt.finalize
@@ -1810,7 +1858,40 @@ fn import_memories_inner(db: mut Database, memories: ref Array[Json]) -> Result[
       let pin = status == "pinned"
 
       match add_memory_inner(db, mem_content, tags, scope, pin) {
-        case Ok(_) -> count = count + 1
+        case Ok(result) -> {
+          # Restore strength/feedback fields if present in export
+          let new_id = result.id
+          let mut update_sql = "UPDATE memories SET updated_at = datetime('now')"
+
+          match mem.query.key("storage_strength").as_float {
+            case Some(v) -> update_sql = update_sql + ", storage_strength = ${v}"
+            case None -> {}
+          }
+          match mem.query.key("retrieval_strength").as_float {
+            case Some(v) -> update_sql = update_sql + ", retrieval_strength = ${v}"
+            case None -> {}
+          }
+          match mem.query.key("helpful_count").as_int {
+            case Some(v) -> update_sql = update_sql + ", helpful_count = ${v}"
+            case None -> {}
+          }
+          match mem.query.key("harmful_count").as_int {
+            case Some(v) -> update_sql = update_sql + ", harmful_count = ${v}"
+            case None -> {}
+          }
+          match mem.query.key("access_count").as_int {
+            case Some(v) -> update_sql = update_sql + ", access_count = ${v}"
+            case None -> {}
+          }
+
+          update_sql = update_sql + " WHERE id = ${new_id}"
+          let _ = db.exec(update_sql)
+
+          # Recalculate combined strength from the restored values
+          let _ = db.exec("UPDATE memories SET strength = 0.7 * retrieval_strength + 0.3 * (storage_strength / 10.0) WHERE id = ${new_id}")
+
+          count = count + 1
+        }
         case Error(e) -> {
           failed = failed + 1
           if first_error == "" {
