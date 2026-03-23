@@ -321,7 +321,7 @@ impl Statement {
 }
 
 # Converts a String to a null-terminated byte array for C FFI.
-fn to_cstr(s: ref String) -> ByteArray {
+fn pub to_cstr(s: ref String) -> ByteArray {
   let mut bytes = s.to_byte_array
   bytes.push(0)
   bytes

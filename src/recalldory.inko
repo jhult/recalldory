@@ -1,5 +1,7 @@
 import cli (parse_args, Command, ParsedArgs)
-import db (Database, Statement, init_schema, migrate_schema, SQLITE_ROW, SQLITE_DONE)
+import db (Database, Statement, init_schema, migrate_schema, SQLITE_ROW, SQLITE_DONE, to_cstr)
+
+fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
 import std.env
 import std.stdio (Stdout)
 import std.string (StringBuffer, IntoString)
@@ -275,15 +277,25 @@ fn handle_hook_install(out: Stdout) {
     }
   }
 
-  # Write back with pretty printing
+  # Write atomically: write to temp file then rename
   let output = root.to_pretty_string + "\n"
-  match WriteOnlyFile.new(settings_file) {
+  let tmp_path = "${settings_path}.tmp"
+  let tmp_file = tmp_path.to_path
+  match WriteOnlyFile.new(tmp_file) {
     case Ok(f) -> {
       let mut file = f
       match file.write(output.to_byte_array) {
         case Ok(_) -> {
           let _ = file.flush
-          out.print("{\"success\": true, \"message\": \"Hook installed to ${settings_path}\"}")
+          # Rename temp file to target (atomic on POSIX)
+          let src = to_cstr(tmp_path)
+          let dst = to_cstr(settings_path)
+          let rename_result = rename(src.pointer, dst.pointer)
+          if (rename_result as Int) == 0 {
+            out.print("{\"success\": true, \"message\": \"Hook installed to ${settings_path}\"}")
+          } else {
+            out.print("{\"error\": \"Failed to rename temp file to settings\"}")
+          }
         }
         case Error(e) -> {
           out.print("{\"error\": \"Failed to write settings: ${e}\"}")
@@ -291,7 +303,7 @@ fn handle_hook_install(out: Stdout) {
       }
     }
     case Error(e) -> {
-      out.print("{\"error\": \"Failed to open settings for writing: ${e}\"}")
+      out.print("{\"error\": \"Failed to open temp file for writing: ${e}\"}")
     }
   }
 }
@@ -542,7 +554,14 @@ fn add_memory(db: mut Database, content: String, tags: String, scope: String, pi
   }
 }
 
+# Maximum content size: 64KB
+let MAX_CONTENT_SIZE = 65536
+
 fn add_memory_inner(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
+  # Enforce maximum content length
+  if content.size > MAX_CONTENT_SIZE {
+    return Result.Error("Content exceeds maximum size of 64KB")
+  }
   let hash = sha256_hash(content)
   let simhash_val = simhash(content)
   let status = if pin { "pinned" } else { "active" }
