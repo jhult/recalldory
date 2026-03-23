@@ -2449,8 +2449,15 @@ type pub Memory {
   let @is_contradiction: Bool
 }
 
-impl Memory{
-  fn pub static from_row(stmt: ref Statement) -> Memory{
+impl Memory {
+  # Core constructor: reads the standard 16 columns (0-15) plus optional extras
+  fn static build(
+    stmt: ref Statement,
+    similarity: Float64,
+    parent_id: Option[Int],
+    contradicts_id: Option[Int],
+    is_contradiction: Bool
+  ) -> Memory {
     Memory(
       id: stmt.column_int(0),
       content: stmt.column_text(1),
@@ -2468,96 +2475,33 @@ impl Memory{
       created_at: stmt.column_text(13),
       updated_at: stmt.column_text(14),
       last_accessed: stmt.column_text(15),
-      similarity: 0.0 as Float64,
-      parent_id: Option.None,
-      contradicts_id: Option.None,
+      similarity: similarity,
+      parent_id: parent_id,
+      contradicts_id: contradicts_id,
       storage_strength: 0.1 as Float64,
       retrieval_strength: 1.0 as Float64,
-      is_contradiction: false
+      is_contradiction: is_contradiction
     )
   }
 
-  fn pub static from_row_with_score(stmt: ref Statement) -> Memory{
-    Memory(
-      id: stmt.column_int(0),
-      content: stmt.column_text(1),
-      content_hash: stmt.column_text(2),
-      summary: stmt.column_text(3),
-      tags: stmt.column_text(4),
-      scope: stmt.column_text(5),
-      status: stmt.column_text(6),
-      xflag: stmt.column_int(7) == 1,
-      strength: stmt.column_double(8),
-      access_count: stmt.column_int(9),
-      decay_rate: stmt.column_double(10),
-      helpful_count: stmt.column_int(11),
-      harmful_count: stmt.column_int(12),
-      created_at: stmt.column_text(13),
-      updated_at: stmt.column_text(14),
-      last_accessed: stmt.column_text(15),
-      similarity: stmt.column_double(16),
-      parent_id: Option.None,
-      contradicts_id: Option.None,
-      storage_strength: 0.1 as Float64,
-      retrieval_strength: 1.0 as Float64,
-      is_contradiction: false
-    )
+  fn pub static from_row(stmt: ref Statement) -> Memory {
+    build(stmt, 0.0 as Float64, Option.None, Option.None, false)
   }
 
-  fn pub static from_row_with_parent(stmt: ref Statement) -> Memory{
+  fn pub static from_row_with_score(stmt: ref Statement) -> Memory {
+    build(stmt, stmt.column_double(16), Option.None, Option.None, false)
+  }
+
+  fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
     let parent = stmt.column_int(16)
-    Memory(
-      id: stmt.column_int(0),
-      content: stmt.column_text(1),
-      content_hash: stmt.column_text(2),
-      summary: stmt.column_text(3),
-      tags: stmt.column_text(4),
-      scope: stmt.column_text(5),
-      status: stmt.column_text(6),
-      xflag: stmt.column_int(7) == 1,
-      strength: stmt.column_double(8),
-      access_count: stmt.column_int(9),
-      decay_rate: stmt.column_double(10),
-      helpful_count: stmt.column_int(11),
-      harmful_count: stmt.column_int(12),
-      created_at: stmt.column_text(13),
-      updated_at: stmt.column_text(14),
-      last_accessed: stmt.column_text(15),
-      similarity: 0.0 as Float64,
-      parent_id: if parent > 0 { Option.Some(parent) } else { Option.None },
-      contradicts_id: Option.None,
-      storage_strength: 0.1 as Float64,
-      retrieval_strength: 1.0 as Float64,
-      is_contradiction: false
-    )
+    let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
+    build(stmt, 0.0 as Float64, pid, Option.None, false)
   }
 
-  fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory{
+  fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
     let contradicts = stmt.column_int(16)
-    Memory(
-      id: stmt.column_int(0),
-      content: stmt.column_text(1),
-      content_hash: stmt.column_text(2),
-      summary: stmt.column_text(3),
-      tags: stmt.column_text(4),
-      scope: stmt.column_text(5),
-      status: stmt.column_text(6),
-      xflag: stmt.column_int(7) == 1,
-      strength: stmt.column_double(8),
-      access_count: stmt.column_int(9),
-      decay_rate: stmt.column_double(10),
-      helpful_count: stmt.column_int(11),
-      harmful_count: stmt.column_int(12),
-      created_at: stmt.column_text(13),
-      updated_at: stmt.column_text(14),
-      last_accessed: stmt.column_text(15),
-      similarity: 0.0 as Float64,
-      parent_id: Option.None,
-      contradicts_id: if contradicts > 0 { Option.Some(contradicts) } else { Option.None },
-      storage_strength: 0.1 as Float64,
-      retrieval_strength: 1.0 as Float64,
-      is_contradiction: true
-    )
+    let cid = if contradicts > 0 { Option.Some(contradicts) } else { Option.None }
+    build(stmt, 0.0 as Float64, Option.None, cid, true)
   }
 }
 
