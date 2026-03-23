@@ -13,6 +13,9 @@ import std.bytes (ByteArray)
 import std.io (Buffer, Write)
 import std.map (Map)
 
+# Common SQL column list for memory queries
+let MEMORY_COLUMNS = "id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed"
+
 # Common words to ignore for entity extraction
 let COMMON_WORDS = ["the", "that", "this", "with", "from", "have", "been", "were",
                     "what", "when", "where", "which", "while", "about", "would",
@@ -906,7 +909,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
 }
 
 fn list_memories(db: mut Database, scope_filter: String, status_filter: String, limit: Int) -> Result[Array[Memory], String] {
-  let mut sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed FROM memories WHERE 1=1"
+  let mut sql = "SELECT ${MEMORY_COLUMNS} FROM memories WHERE 1=1"
 
   if scope_filter != "" {
     sql = sql + " AND scope = ?"
@@ -1399,7 +1402,7 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
   let mut history: Array[Memory] = []
 
   # Get current memory
-  let sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, parent_id FROM memories WHERE id = ?"
+  let sql = "SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
@@ -1442,7 +1445,7 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
             }
             visited.push(pid)
 
-            let parent_sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, parent_id FROM memories WHERE id = ?"
+            let parent_sql = "SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?"
             let mut parent_stmt = match db.prepare(parent_sql) {
               case Ok(s) -> s
               case Error(_) -> break
@@ -1505,7 +1508,7 @@ fn get_parent_id(db: mut Database, id: Int) -> Option[Int] {
 
 # List all flagged contradictions
 fn list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
-  let sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC"
+  let sql = "SELECT ${MEMORY_COLUMNS}, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
@@ -1847,7 +1850,7 @@ fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
 }
 
 fn export_memories(db: mut Database) -> Result[String, String] {
-  let sql = "SELECT id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed FROM memories ORDER BY created_at DESC"
+  let sql = "SELECT ${MEMORY_COLUMNS} FROM memories ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
