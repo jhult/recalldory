@@ -1,6 +1,7 @@
 import std.env
 
-type pub enum Command {
+# Commands that require a database connection
+type pub enum DbCommand {
   case Add(String, String, String, Bool)
   case Recall(String, String, Int)
   case List(String, String, Int)
@@ -13,13 +14,18 @@ type pub enum Command {
   case Stats
   case Export
   case Import(String)
-  case HookPostCompact
-  case HookInstall
   case Update(Int, String, String, String)
   case History(Int)
   case Contradictions(Option[Int])
-  case Help
   case RebuildFts
+}
+
+# Top-level command: either standalone or DB-backed
+type pub enum Command {
+  case Help
+  case HookPostCompact
+  case HookInstall
+  case Db(DbCommand)
 }
 
 type pub ParsedArgs {
@@ -71,14 +77,14 @@ fn pub parse_args -> Option[ParsedArgs] {
       case "feedback" -> parse_feedback(args)
       case "maintain" -> parse_maintain(args)
       case "agents-md" -> parse_agents_md(args)
-      case "stats" -> Option.Some(Command.Stats)
-      case "export" -> Option.Some(Command.Export)
+      case "stats" -> Option.Some(Command.Db(DbCommand.Stats))
+      case "export" -> Option.Some(Command.Db(DbCommand.Export))
       case "import" -> parse_import(args)
       case "hook" -> parse_hook(args)
       case "update" -> parse_update(args)
       case "history" -> parse_history(args)
       case "contradictions" -> parse_contradictions(args)
-      case "rebuild-fts" -> Option.Some(Command.RebuildFts)
+      case "rebuild-fts" -> Option.Some(Command.Db(DbCommand.RebuildFts))
       case _ -> Option.None
     }
     case Error(_) -> Option.None
@@ -135,7 +141,7 @@ fn parse_add(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.Add(content, tags, scope, pin))
+  Option.Some(Command.Db(DbCommand.Add(content, tags, scope, pin)))
 }
 
 fn parse_recall(args: Array[String]) -> Option[Command] {
@@ -182,7 +188,7 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.Recall(query, scope, top))
+  Option.Some(Command.Db(DbCommand.Recall(query, scope, top)))
 }
 
 fn parse_list(args: Array[String]) -> Option[Command] {
@@ -229,7 +235,7 @@ fn parse_list(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.List(scope, status, limit))
+  Option.Some(Command.Db(DbCommand.List(scope, status, limit)))
 }
 
 fn parse_forget(args: Array[String]) -> Option[Command] {
@@ -240,7 +246,7 @@ fn parse_forget(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(id_str) -> {
       match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Forget(id))
+        case Some(id) -> Option.Some(Command.Db(DbCommand.Forget(id)))
         case None -> Option.None
       }
     }
@@ -256,7 +262,7 @@ fn parse_pin(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(id_str) -> {
       match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Pin(id))
+        case Some(id) -> Option.Some(Command.Db(DbCommand.Pin(id)))
         case None -> Option.None
       }
     }
@@ -272,7 +278,7 @@ fn parse_unpin(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(id_str) -> {
       match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Unpin(id))
+        case Some(id) -> Option.Some(Command.Db(DbCommand.Unpin(id)))
         case None -> Option.None
       }
     }
@@ -298,7 +304,7 @@ fn parse_feedback(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  Option.Some(Command.Feedback(id, feedback_type))
+  Option.Some(Command.Db(DbCommand.Feedback(id, feedback_type)))
 }
 
 fn parse_maintain(args: Array[String]) -> Option[Command] {
@@ -317,7 +323,7 @@ fn parse_maintain(args: Array[String]) -> Option[Command] {
     i = i + 1
   }
 
-  Option.Some(Command.Maintain(dry_run))
+  Option.Some(Command.Db(DbCommand.Maintain(dry_run)))
 }
 
 fn parse_agents_md(args: Array[String]) -> Option[Command] {
@@ -343,7 +349,7 @@ fn parse_agents_md(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.AgentsMd(path))
+  Option.Some(Command.Db(DbCommand.AgentsMd(path)))
 }
 
 fn parse_import(args: Array[String]) -> Option[Command] {
@@ -352,7 +358,7 @@ fn parse_import(args: Array[String]) -> Option[Command] {
   }
 
   match args.get(1) {
-    case Ok(file) -> Option.Some(Command.Import(file))
+    case Ok(file) -> Option.Some(Command.Db(DbCommand.Import(file)))
     case Error(_) -> Option.None
   }
 }
@@ -496,7 +502,7 @@ fn parse_update(args: Array[String]) -> Option[Command] {
     return Option.None
   }
 
-  Option.Some(Command.Update(id, final_content, tags, scope))
+  Option.Some(Command.Db(DbCommand.Update(id, final_content, tags, scope)))
 }
 
 fn parse_history(args: Array[String]) -> Option[Command] {
@@ -507,7 +513,7 @@ fn parse_history(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(id_str) -> {
       match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.History(id))
+        case Some(id) -> Option.Some(Command.Db(DbCommand.History(id)))
         case None -> Option.None
       }
     }
@@ -538,5 +544,5 @@ fn parse_contradictions(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.Contradictions(resolve_id))
+  Option.Some(Command.Db(DbCommand.Contradictions(resolve_id)))
 }

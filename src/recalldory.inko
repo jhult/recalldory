@@ -1,4 +1,4 @@
-import cli (parse_args, Command, ParsedArgs)
+import cli (parse_args, Command, DbCommand, ParsedArgs)
 import db (Database, Statement, init_schema, migrate_schema, SQLITE_ROW, SQLITE_DONE, to_cstr)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
@@ -35,28 +35,9 @@ type async Main {
         let cmd = parsed.into_command
         match cmd {
           case Help -> print_help(out)
-          case HookPostCompact -> {
-            handle_hook_post_compact(out)
-          }
-          case HookInstall -> {
-            handle_hook_install(out)
-          }
-          case Add(a, b, c, d) -> run_with_db(Command.Add(a, b, c, d), global, out)
-          case Recall(a, b, c) -> run_with_db(Command.Recall(a, b, c), global, out)
-          case List(a, b, c) -> run_with_db(Command.List(a, b, c), global, out)
-          case Forget(a) -> run_with_db(Command.Forget(a), global, out)
-          case Pin(a) -> run_with_db(Command.Pin(a), global, out)
-          case Unpin(a) -> run_with_db(Command.Unpin(a), global, out)
-          case Feedback(a, b) -> run_with_db(Command.Feedback(a, b), global, out)
-          case Maintain(a) -> run_with_db(Command.Maintain(a), global, out)
-          case AgentsMd(a) -> run_with_db(Command.AgentsMd(a), global, out)
-          case Stats -> run_with_db(Command.Stats, global, out)
-          case Export -> run_with_db(Command.Export, global, out)
-          case Import(a) -> run_with_db(Command.Import(a), global, out)
-          case Update(a, b, c, d) -> run_with_db(Command.Update(a, b, c, d), global, out)
-          case History(a) -> run_with_db(Command.History(a), global, out)
-          case Contradictions(a) -> run_with_db(Command.Contradictions(a), global, out)
-          case RebuildFts -> run_with_db(Command.RebuildFts, global, out)
+          case HookPostCompact -> handle_hook_post_compact(out)
+          case HookInstall -> handle_hook_install(out)
+          case Db(db_cmd) -> run_with_db(db_cmd, global, out)
         }
       }
       case None -> {
@@ -92,7 +73,7 @@ fn print_help(out: Stdout) {
   out.print("  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database")
 }
 
-fn run_with_db(cmd: Command, global: Bool, out: Stdout) {
+fn run_with_db(cmd: DbCommand, global: Bool, out: Stdout) {
   match open_database(global) {
     case Ok(db) -> {
       let mut database = db
@@ -376,7 +357,7 @@ fn open_database(global: Bool) -> Result[Database, String] {
   Result.Ok(db)
 }
 
-fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
+fn handle_command(cmd: DbCommand, db: mut Database, out: Stdout) {
   match cmd {
     case Add(content, tags, scope, pin) -> {
       match add_memory(db, content, tags, scope, pin) {
@@ -511,12 +492,6 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
         }
       }
     }
-    case HookPostCompact -> {
-      # Handled in main before DB open; this branch is unreachable
-    }
-    case HookInstall -> {
-      # Handled in main before DB open; this branch is unreachable
-    }
     case Update(id, content, tags, scope) -> {
       match update_memory(db, id, content, tags, scope) {
         case Ok(new_id) -> {
@@ -570,9 +545,6 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           out.print("{\"error\": \"${escape_json(e)}\"}")
         }
       }
-    }
-    case Help -> {
-      # Unreachable: handled before DB open
     }
   }
 }
