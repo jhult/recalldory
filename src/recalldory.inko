@@ -427,8 +427,13 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
     }
     case Import(file) -> {
       match import_memories(db, file) {
-        case Ok(count) -> {
-          out.print("{\"success\": true, \"imported\": ${count}}")
+        case Ok(result) -> {
+          let mut json = "{\"success\": true, \"imported\": ${result.imported}, \"failed\": ${result.failed}"
+          if result.first_error != "" {
+            json = json + ", \"first_error\": \"${escape_json(result.first_error)}\""
+          }
+          json = json + "}"
+          out.print(json)
         }
         case Error(e) -> {
           out.print("{\"error\": \"${escape_json(e)}\"}")
@@ -841,8 +846,12 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
   if scope_filter != "" {
     sql = sql + " AND scope = ?"
   }
-  if status_filter != ""{
+  if status_filter != "" {
     sql = sql + " AND status = ?"
+  } else {
+    # By default, exclude superseded and anti-pattern memories
+    # consistent with search_memories behavior
+    sql = sql + " AND status NOT IN ('superseded', 'anti-pattern')"
   }
 
   sql = sql + " ORDER BY last_accessed DESC LIMIT ?"
@@ -914,7 +923,8 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
   }
 
-  match stmt.bind_text(1, query) {
+  let safe_query = sanitize_fts5_query(query)
+  match stmt.bind_text(1, safe_query) {
     case Error(e) -> {
       stmt.finalize
       return Result.Error("Failed to bind: ${e}")
@@ -1068,12 +1078,14 @@ fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String]{
 }
 
 fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
-  if feedback_type != "helpful" and feedback_type != "harmful" {
+  let sql = if feedback_type == "helpful" {
+    "UPDATE memories SET helpful_count = helpful_count + 1, updated_at = datetime('now') WHERE id = ?"
+  } else if feedback_type == "harmful" {
+    "UPDATE memories SET harmful_count = harmful_count + 1, updated_at = datetime('now') WHERE id = ?"
+  } else {
     return Result.Error("Invalid feedback type: must be 'helpful' or 'harmful'")
   }
 
-  let column = if feedback_type == "helpful" { "helpful_count" } else { "harmful_count" }
-  let sql = "UPDATE memories SET ${column} = ${column} + 1, updated_at = datetime('now') WHERE id = ?"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error("Failed to prepare: ${e}")
@@ -1438,7 +1450,7 @@ type pub MaintainStats {
 
 fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, String] {
   if dry_run {
-    return Result.Ok(MaintainStats(decayed: 0, anti_patterns: 0, pruned: 0))
+    return maintain_memory_preview(db)
   }
 
   let _ = db.exec("BEGIN")
@@ -1452,6 +1464,49 @@ fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, Str
       Result.Error(e)
     }
   }
+}
+
+fn maintain_memory_preview(db: mut Database) -> Result[MaintainStats, String] {
+  # Count how many would be decayed
+  let decay_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
+  let mut decay_stmt = match db.prepare(decay_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let decayed = if decay_stmt.step == SQLITE_ROW {
+    decay_stmt.column_int(0)
+  } else {
+    0
+  }
+  decay_stmt.finalize
+
+  # Count how many would be marked anti-pattern
+  let anti_sql = "SELECT COUNT(*) FROM memories WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
+  let mut anti_stmt = match db.prepare(anti_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let anti_patterns = if anti_stmt.step == SQLITE_ROW {
+    anti_stmt.column_int(0)
+  } else {
+    0
+  }
+  anti_stmt.finalize
+
+  # Count how many would be pruned
+  let prune_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
+  let mut prune_stmt = match db.prepare(prune_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+  let pruned = if prune_stmt.step == SQLITE_ROW {
+    prune_stmt.column_int(0)
+  } else {
+    0
+  }
+  prune_stmt.finalize
+
+  Result.Ok(MaintainStats(decayed: decayed, anti_patterns: anti_patterns, pruned: pruned))
 }
 
 fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
@@ -1704,7 +1759,13 @@ fn export_memories(db: mut Database) -> Result[String, String] {
   Result.Ok(result)
 }
 
-fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
+type pub ImportResult {
+  let @imported: Int
+  let @failed: Int
+  let @first_error: String
+}
+
+fn import_memories(db: mut Database, file: String) -> Result[ImportResult, String] {
   # Read file contents
   let path = file.to_path
   let mut f = match ReadOnlyFile.new(path) {
@@ -1733,10 +1794,23 @@ fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
     case None -> return Result.Error("'memories' is not an array")
   }
 
-  let mut count = 0
-
-  # Wrap entire import in a single transaction for atomicity and performance
   let _ = db.exec("BEGIN")
+  match import_memories_inner(db, memories) {
+    case Ok(v) -> {
+      let _ = db.exec("COMMIT")
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      let _ = db.exec("ROLLBACK")
+      Result.Error(e)
+    }
+  }
+}
+
+fn import_memories_inner(db: mut Database, memories: ref Array[Json]) -> Result[ImportResult, String] {
+  let mut count = 0
+  let mut failed = 0
+  let mut first_error = ""
 
   for mem in memories.iter {
     # Get content from each memory object
@@ -1768,16 +1842,19 @@ fn import_memories(db: mut Database, file: String) -> Result[Int, String] {
 
       let pin = status == "pinned"
 
-      # Insert the memory (use inner fn to avoid nested transactions)
       match add_memory_inner(db, mem_content, tags, scope, pin) {
         case Ok(_) -> count = count + 1
-        case Error(_) -> { }
+        case Error(e) -> {
+          failed = failed + 1
+          if first_error == "" {
+            first_error = e
+          }
+        }
       }
     }
   }
 
-  let _ = db.exec("COMMIT")
-  Result.Ok(count)
+  Result.Ok(ImportResult(imported: count, failed: failed, first_error: first_error))
 }
 
 fn get_timestamp(db: mut Database) -> String {
@@ -1957,15 +2034,17 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
   # Check if new content has negation
   let has_negation = has_negation_words(ref content_bytes)
 
-  # Build FTS5 query from entities: "term1 OR term2 OR term3"
+  # Build FTS5 query from entities: "\"term1\" OR \"term2\" OR \"term3\""
+  # Each entity is quoted to prevent FTS5 syntax injection
   let mut fts_query = ""
   let mut first = true
   for entity in entities.iter {
+    let safe_entity = sanitize_fts5_query(entity)
     if first {
-      fts_query = entity
+      fts_query = safe_entity
       first = false
     } else {
-      fts_query = fts_query + " OR " + entity
+      fts_query = fts_query + " OR " + safe_entity
     }
   }
 
@@ -2020,6 +2099,28 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
   stmt.finalize
 
   (false, Option.None)
+}
+
+# Sanitize a string for use in FTS5 MATCH queries.
+# Wraps the input in double quotes to force literal matching,
+# escaping any internal double quotes by doubling them.
+fn sanitize_fts5_query(query: String) -> String {
+  let bytes = query.to_byte_array
+  let mut result = ByteArray.new
+  result.push(34) # opening "
+
+  for byte in bytes.iter {
+    if byte == 34 {
+      # Escape double quote by doubling it
+      result.push(34)
+      result.push(34)
+    } else {
+      result.push(byte)
+    }
+  }
+
+  result.push(34) # closing "
+  result.into_string
 }
 
 fn to_lowercase(s: String) -> String {
