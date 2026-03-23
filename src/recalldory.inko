@@ -893,6 +893,10 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   }
 
   let safe_query = sanitize_fts5_query(query)
+  if query.size == 0 {
+    stmt.finalize
+    return Result.Ok([])
+  }
   match stmt.bind_text(1, safe_query) {
     case Error(e) -> {
       stmt.finalize
@@ -1425,6 +1429,7 @@ fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, Str
   match maintain_memory_inner(db) {
     case Ok(v) -> {
       let _ = exec_sql(db, "COMMIT")
+      let _ = exec_sql(db, "PRAGMA wal_checkpoint(TRUNCATE)")
       Result.Ok(v)
     }
     case Error(e) -> {
@@ -1731,6 +1736,11 @@ fn import_memories(db: mut Database, file: String) -> Result[ImportResult, Strin
   let _ = f.read_all(bytes)
   let content = bytes.into_string
 
+  # Validate import size
+  if content.size > 10_000_000 {
+    return Result.Error("Import file exceeds maximum size of 10MB")
+  }
+
   # Create buffer and parse JSON
   let buffer = Buffer.new(content)
   let json = match Json.parse(buffer) {
@@ -1746,6 +1756,10 @@ fn import_memories(db: mut Database, file: String) -> Result[ImportResult, Strin
   let memories = match memories_q.as_array {
     case Some(arr) -> arr
     case None -> return Result.Error("'memories' is not an array")
+  }
+
+  if memories.size > 10_000 {
+    return Result.Error("Import exceeds maximum of 10000 memories")
   }
 
   match exec_sql(db, "BEGIN") {
