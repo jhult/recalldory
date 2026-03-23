@@ -416,7 +416,7 @@ fn int_parse(s: String) -> Option[Int] {
 }
 
 fn parse_update(args: Array[String]) -> Option[Command] {
-  if args.size < 3 {
+  if args.size < 2 {
     return Option.None
   }
 
@@ -428,19 +428,37 @@ fn parse_update(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  let content = match args.get(2) {
-    case Ok(c) -> c
-    case Error(_) -> return Option.None
-  }
-
+  # Support both positional content and --content flag
+  let mut content = ""
   let mut tags = ""
   let mut scope = ""
+  let mut positional_content = ""
 
-  let mut i = 3
+  # Check if arg 2 is a flag or positional content
+  match args.get(2) {
+    case Ok(arg) -> {
+      if arg == "--content" or arg == "--tags" or arg == "--scope" {
+        # It's a flag, no positional content
+      } else {
+        positional_content = arg
+      }
+    }
+    case Error(_) -> {}
+  }
+
+  let mut i = if positional_content != "" { 3 } else { 2 }
   while i < args.size {
     match args.get(i) {
       case Ok(arg) -> {
-        if arg == "--tags" and i + 1 < args.size {
+        if arg == "--content" and i + 1 < args.size {
+          match args.get(i + 1) {
+            case Ok(c) -> {
+              content = c
+              i = i + 2
+            }
+            case Error(_) -> i = i + 1
+          }
+        } else if arg == "--tags" and i + 1 < args.size {
           match args.get(i + 1) {
             case Ok(t) -> {
               tags = t
@@ -464,7 +482,15 @@ fn parse_update(args: Array[String]) -> Option[Command] {
     }
   }
 
-  Option.Some(Command.Update(id, content, tags, scope))
+  # --content flag takes priority over positional content
+  let final_content = if content != "" { content } else { positional_content }
+
+  # Need at least content to update
+  if final_content == "" and tags == "" and scope == "" {
+    return Option.None
+  }
+
+  Option.Some(Command.Update(id, final_content, tags, scope))
 }
 
 fn parse_history(args: Array[String]) -> Option[Command] {
