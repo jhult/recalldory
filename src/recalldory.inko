@@ -1,29 +1,77 @@
-import cli (parse_args, Command, DbCommand, ParsedArgs)
-import db (Database, Statement, init_schema, migrate_schema, SQLITE_ROW, SQLITE_DONE, to_cstr)
+import cli (DbCommand, parse_args)
+import db (
+  Database, SQLITE_DONE, SQLITE_ROW, Statement, init_schema, migrate_schema,
+  to_cstr,
+)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
-import std.env
-import std.stdio (Stdout)
-import std.string (StringBuffer, IntoString)
-import std.crypto.sha2 (Sha256)
-import std.json (Json)
-import std.fs.file (ReadOnlyFile, WriteOnlyFile)
-import std.fs.path (Path)
+
 import std.bytes (ByteArray)
-import std.io (Buffer, Write)
+import std.crypto.sha2 (Sha256)
+import std.env
+import std.fs.file (ReadOnlyFile, WriteOnlyFile)
+import std.io (Buffer)
+import std.json (Json)
 import std.map (Map)
+import std.stdio (Stdout)
+import std.string (StringBuffer)
 
 # Common SQL column list for memory queries
-let MEMORY_COLUMNS = "id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength"
+let MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength'
 
 # Common words to ignore for entity extraction
-let COMMON_WORDS = ["the", "that", "this", "with", "from", "have", "been", "were",
-                    "what", "when", "where", "which", "while", "about", "would",
-                    "could", "should", "their", "there", "these", "those", "being"]
+let COMMON_WORDS = [
+  'the',
+  'that',
+  'this',
+  'with',
+  'from',
+  'have',
+  'been',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'about',
+  'would',
+  'could',
+  'should',
+  'their',
+  'there',
+  'these',
+  'those',
+  'being',
+]
 
 # Negation words for contradiction detection
-let NEGATION_WORDS = ["not", "never", "dont", "avoid", "cannot", "neither",
-                      "nobody", "nothing", "nowhere", "none"]
+let NEGATION_WORDS = [
+  'not',
+  'never',
+  'dont',
+  'avoid',
+  'cannot',
+  'neither',
+  'nobody',
+  'nothing',
+  'nowhere',
+  'none',
+  'without',
+  'cant',
+  'wont',
+  'shouldnt',
+  'isnt',
+  'couldnt',
+  'wouldnt',
+  'hasnt',
+  'havent',
+  'arent',
+  'doesnt',
+  'didnt',
+  'wasnt',
+  'werent',
+]
 
 type async Main {
   fn async main {
@@ -33,6 +81,7 @@ type async Main {
       case Some(parsed) -> {
         let global = parsed.global
         let cmd = parsed.into_command
+
         match cmd {
           case Help -> print_help(out)
           case HookPostCompact -> handle_hook_post_compact(out)
@@ -40,103 +89,123 @@ type async Main {
           case Db(db_cmd) -> run_with_db(db_cmd, global, out)
         }
       }
-      case None -> {
-        print_help(out)
-      }
+      case None -> print_help(out)
     }
   }
 }
 
 fn print_help(out: Stdout) {
-  out.print("recalldory - persistent memory for AI coding assistants\n")
-  out.print("Usage: recalldory <command> [options] [--global]\n")
-  out.print("\nCommands:")
-  out.print("  add <content> [--tags T] [--scope S] [--pin]   Add a memory")
-  out.print("  recall <query> [--scope S] [--top N]            Search memories")
-  out.print("  list [--scope S] [--status S] [--limit N]       List memories")
-  out.print("  update <id> [content] [--content C] [--tags T]  Update a memory")
-  out.print("  forget <id>                                     Delete a memory")
-  out.print("  pin <id>                                        Pin a memory")
-  out.print("  unpin <id>                                      Unpin a memory")
-  out.print("  feedback <id> <helpful|harmful>                 Give feedback")
-  out.print("  maintain [--dry-run]                            Run maintenance")
-  out.print("  stats                                           Show statistics")
-  out.print("  export                                          Export as JSON")
-  out.print("  import <file>                                   Import from JSON")
-  out.print("  history <id>                                    Show version history")
-  out.print("  contradictions [--resolve <id>]                 Manage contradictions")
-  out.print("  agents-md [--path P]                            Generate AGENTS.md")
-  out.print("  rebuild-fts                                     Rebuild FTS index")
-  out.print("  hook install                                    Install Claude hook")
-  out.print("  hook post-compact                               Post-compact hook")
-  out.print("\nGlobal flag:")
-  out.print("  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database")
+  out.print('recalldory - persistent memory for AI coding assistants\n')
+  out.print('Usage: recalldory <command> [options] [--global]\n')
+  out.print('\nCommands:')
+  out.print('  add <content> [--tags T] [--scope S] [--pin]   Add a memory')
+  out.print('  recall <query> [--scope S] [--top N]            Search memories')
+  out.print('  list [--scope S] [--status S] [--limit N]       List memories')
+  out.print('  update <id> [content] [--content C] [--tags T]  Update a memory')
+  out.print('  forget <id>                                     Delete a memory')
+  out.print('  pin <id>                                        Pin a memory')
+  out.print('  unpin <id>                                      Unpin a memory')
+  out.print('  feedback <id> <helpful|harmful>                 Give feedback')
+  out.print('  maintain [--dry-run]                            Run maintenance')
+  out.print('  stats                                           Show statistics')
+  out.print('  export                                          Export as JSON')
+  out.print(
+    '  import <file>                                   Import from JSON',
+  )
+  out.print(
+    '  history <id>                                    Show version history',
+  )
+  out.print(
+    '  contradictions [--resolve <id>]                 Manage contradictions',
+  )
+  out.print(
+    '  agents-md [--path P]                            Generate AGENTS.md',
+  )
+  out.print(
+    '  rebuild-fts                                     Rebuild FTS index',
+  )
+  out.print(
+    '  hook install                                    Install Claude hook',
+  )
+  out.print(
+    '  hook post-compact                               Post-compact hook',
+  )
+  out.print('\nGlobal flag:')
+  out.print(
+    '  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database',
+  )
 }
 
 fn run_with_db(cmd: DbCommand, global: Bool, out: Stdout) {
   match open_database(global) {
     case Ok(db) -> {
       let mut database = db
+
       handle_command(cmd, database, out)
       database.close
     }
-    case Error(e) -> {
-      out.print("{\"error\": \"${escape_json(e)}\"}")
-    }
+    case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
   }
 }
 
 fn handle_hook_post_compact(out: Stdout) {
-  let mut context = "IMPORTANT: Context was just compacted. Here are your preserved memories:\\n\\n"
-  let mut has_memories = false
+  let mut context = 'IMPORTANT: Context was just compacted. Here are your preserved memories:\\n\\n'
 
-  # Query local project memories
-  match open_database(false) {
-    case Ok(db) -> {
-      let mut local_db = db
-      match list_memories(local_db, "", "", 10) {
-        case Ok(mems) -> {
-          if mems.size > 0 {
-            has_memories = true
-            context = context + "## Project Memories\\n"
-            for mem in mems.iter {
-              context = context + "- [" + escape_json(mem.status) + "] " + escape_json(mem.content) + "\\n"
-            }
-            context = context + "\\n"
-          }
-        }
-        case Error(_) -> {}
-      }
-      local_db.close
-    }
-    case Error(_) -> {}
-  }
+  let project_section = query_memories_for_hook(
+    false,
+    '## Project Memories\\n\\n',
+  )
+  let global_section = query_memories_for_hook(true, '## Global Memories\\n')
 
-  # Query global memories
-  match open_database(true) {
-    case Ok(db) -> {
-      let mut global_db = db
-      match list_memories(global_db, "", "", 10) {
-        case Ok(mems) -> {
-          if mems.size > 0 {
-            has_memories = true
-            context = context + "## Global Memories\\n"
-            for mem in mems.iter {
-              context = context + "- [" + escape_json(mem.status) + "] " + escape_json(mem.content) + "\\n"
-            }
-          }
-        }
-        case Error(_) -> {}
-      }
-      global_db.close
-    }
-    case Error(_) -> {}
-  }
+  if project_section != '' { context = context + project_section }
 
-  if has_memories {
-    out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"${context}\"}}")
+  if global_section != '' { context = context + global_section }
+
+  if project_section != '' or global_section != '' {
+    out.print(
+      '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "${context}"}}',
+    )
   } else {
-    out.print("{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"\"}}")
+    out.print(
+      '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ""}}',
+    )
+  }
+}
+
+# Query memories from a database (local or global) and format for hook output
+fn query_memories_for_hook(global: Bool, header: String) -> String {
+  match open_database(global) {
+    case Ok(db) -> {
+      let mut database = db
+
+      match list_memories(database, '', '', 10) {
+        case Ok(mems) -> {
+          database.close
+
+          if mems.size > 0 {
+            let mut section = header
+
+            for mem in mems.iter {
+              section = section
+                + '- ['
+                + escape_json(mem.status)
+                + '] '
+                + escape_json(mem.content)
+                + '\\n'
+            }
+
+            section
+          } else {
+            ''
+          }
+        }
+        case Error(_) -> {
+          database.close
+          ''
+        }
+      }
+    }
+    case Error(_) -> ''
   }
 }
 
@@ -145,20 +214,20 @@ fn handle_hook_install(out: Stdout) {
   let exe_path = match env.executable {
     case Ok(p) -> p.to_string
     case Error(_) -> {
-      out.print("{\"error\": \"Cannot determine recalldory executable path\"}")
+      out.print('{"error": "Cannot determine recalldory executable path"}')
       return
     }
   }
 
-  let home = match env.get("HOME") {
+  let home = match env.get('HOME') {
     case Ok(h) -> h
     case Error(_) -> {
-      out.print("{\"error\": \"HOME not set\"}")
+      out.print('{"error": "HOME not set"}')
       return
     }
   }
 
-  let settings_path = "${home}/.claude/settings.json"
+  let settings_path = '${home}/.claude/settings.json'
   let settings_file = settings_path.to_path
 
   # Read existing settings or start with empty object
@@ -169,10 +238,13 @@ fn handle_hook_install(out: Stdout) {
       let _ = file.read_all(bytes)
       let content = bytes.into_string
       let buffer = Buffer.new(content)
+
       match Json.parse(buffer) {
         case Ok(json) -> json
         case Error(_) -> {
-          out.print("{\"error\": \"Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry.\"}")
+          out.print(
+            '{"error": "Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry."}',
+          )
           return
         }
       }
@@ -183,51 +255,52 @@ fn handle_hook_install(out: Stdout) {
   # Build the hook entry:
   # { "matcher": "compact", "hooks": [{ "type": "command", "command": "<exe> hook post-compact" }] }
   let mut inner_hook: Map[String, Json] = Map.new
-  inner_hook.set("type", Json.String("command"))
-  inner_hook.set("command", Json.String("${exe_path} hook post-compact"))
+
+  inner_hook.set('type', Json.String('command'))
+  inner_hook.set('command', Json.String('${exe_path} hook post-compact'))
 
   let mut matcher_obj: Map[String, Json] = Map.new
-  matcher_obj.set("matcher", Json.String("compact"))
-  matcher_obj.set("hooks", Json.Array([Json.Object(inner_hook)]))
+
+  matcher_obj.set('matcher', Json.String('compact'))
+  matcher_obj.set('hooks', Json.Array([Json.Object(inner_hook)]))
 
   let recalldory_entry = Json.Object(matcher_obj)
 
   # Get or create the hooks object, then set SessionStart
   match mut root {
     case Object(root_map) -> {
-      match root_map.get("hooks") {
+      match root_map.get('hooks') {
         case Ok(hooks_val) -> {
           match hooks_val {
             case Object(_) -> {}
             case _ -> {
               # hooks exists but isn't an object — replace it
-              root_map.set("hooks", Json.Object(Map.new))
+              root_map.set('hooks', Json.Object(Map.new))
             }
           }
         }
-        case Error(_) -> {
-          root_map.set("hooks", Json.Object(Map.new))
-        }
+        case Error(_) -> root_map.set('hooks', Json.Object(Map.new))
       }
 
       # Now get the hooks map mutably and set SessionStart
-      match root_map.get_mut("hooks") {
+      match root_map.get_mut('hooks') {
         case Ok(hooks_json) -> {
           match mut hooks_json {
             case Object(hooks_map) -> {
               # Check if SessionStart already has a compact matcher from recalldory
               let mut already_installed = false
-              match hooks_map.get("SessionStart") {
+
+              match hooks_map.get('SessionStart') {
                 case Ok(ss) -> {
                   match ss {
                     case Array(arr) -> {
                       for entry in arr.iter {
                         match entry {
                           case Object(entry_map) -> {
-                            match entry_map.get("matcher") {
+                            match entry_map.get('matcher') {
                               case Ok(m) -> {
                                 match m {
-                                  case String(s) if s == "compact" -> {
+                                  case String(s) if s == 'compact' -> {
                                     already_installed = true
                                   }
                                   case _ -> {}
@@ -247,17 +320,19 @@ fn handle_hook_install(out: Stdout) {
               }
 
               if already_installed {
-                out.print("{\"success\": true, \"message\": \"Hook already installed\"}")
+                out.print(
+                  '{"success": true, "message": "Hook already installed"}',
+                )
                 return
               }
 
               # Add our entry to SessionStart array (or create it)
-              match hooks_map.get("SessionStart") {
+              match hooks_map.get('SessionStart') {
                 case Ok(ss) -> {
                   match ss {
                     case Array(_) -> {
                       # Append to existing array
-                      match hooks_map.get_mut("SessionStart") {
+                      match hooks_map.get_mut('SessionStart') {
                         case Ok(ss_mut) -> {
                           match mut ss_mut {
                             case Array(arr) -> arr.push(recalldory_entry)
@@ -268,12 +343,12 @@ fn handle_hook_install(out: Stdout) {
                       }
                     }
                     case _ -> {
-                      hooks_map.set("SessionStart", Json.Array([recalldory_entry]))
+                      hooks_map.set('SessionStart', Json.Array([recalldory_entry]))
                     }
                   }
                 }
                 case Error(_) -> {
-                  hooks_map.set("SessionStart", Json.Array([recalldory_entry]))
+                  hooks_map.set('SessionStart', Json.Array([recalldory_entry]))
                 }
               }
             }
@@ -284,18 +359,20 @@ fn handle_hook_install(out: Stdout) {
       }
     }
     case _ -> {
-      out.print("{\"error\": \"settings.json root is not an object\"}")
+      out.print('{"error": "settings.json root is not an object"}')
       return
     }
   }
 
   # Write atomically: write to temp file then rename
-  let output = root.to_pretty_string + "\n"
-  let tmp_path = "${settings_path}.tmp"
+  let output = root.to_pretty_string + '\n'
+  let tmp_path = '${settings_path}.tmp'
   let tmp_file = tmp_path.to_path
+
   match WriteOnlyFile.new(tmp_file) {
     case Ok(f) -> {
       let mut file = f
+
       match file.write(output.to_byte_array) {
         case Ok(_) -> {
           let _ = file.flush
@@ -303,58 +380,81 @@ fn handle_hook_install(out: Stdout) {
           let src = to_cstr(tmp_path)
           let dst = to_cstr(settings_path)
           let rename_result = rename(src.pointer, dst.pointer)
+
           if (rename_result as Int) == 0 {
-            out.print("{\"success\": true, \"message\": \"Hook installed to ${escape_json(settings_path)}\"}")
+            out.print(
+              '{"success": true, "message": "Hook installed to ${escape_json(settings_path)}"}',
+            )
           } else {
-            out.print("{\"error\": \"Failed to rename temp file to settings\"}")
+            out.print('{"error": "Failed to rename temp file to settings"}')
           }
         }
         case Error(e) -> {
-          let err_msg = "${e}"
-          out.print("{\"error\": \"Failed to write settings: ${escape_json(err_msg)}\"}")
+          let err_msg = '${e}'
+
+          out.print(
+            '{"error": "Failed to write settings: ${escape_json(err_msg)}"}',
+          )
         }
       }
     }
     case Error(e) -> {
-      let err_msg = "${e}"
-      out.print("{\"error\": \"Failed to open temp file for writing: ${escape_json(err_msg)}\"}")
+      let err_msg = '${e}'
+
+      out.print(
+        '{"error": "Failed to open temp file for writing: ${escape_json(err_msg)}"}',
+      )
     }
   }
 }
 
 fn open_database(global: Bool) -> Result[Database, String] {
   let path = if global {
-    let home = match env.get("HOME") {
+    let home = match env.get('HOME') {
       case Ok(h) -> h
-      case Error(_) -> return Result.Error("HOME not set")
+      case Error(_) -> return Result.Error('HOME not set')
     }
-    let dir = "${home}/.recalldory".to_path
+    let dir = '${home}/.recalldory'.to_path
+
     dir.create_directory
-    "${home}/.recalldory/memory.db"
+    '${home}/.recalldory/memory.db'
   } else {
-    let dir = ".recalldory".to_path
+    let dir = '.recalldory'.to_path
+
     dir.create_directory
-    "./.recalldory/memory.db"
+    './.recalldory/memory.db'
   }
 
   let db = match Database.new(path) {
     case Ok(d) -> d
-    case Error(e) -> return Result.Error("Failed to open database: ${e}")
+    case Error(e) -> return Result.Error('Failed to open database: ${e}')
   }
 
   # Enable WAL mode before schema init for better write performance
-  let _ = db.exec("PRAGMA journal_mode=WAL")
+  match db.exec('PRAGMA journal_mode=WAL') {
+    case Error(e) -> {
+      db.close
+      return Result.Error('Failed to enable WAL mode: ${e}')
+    }
+    case Ok(_) -> {}
+  }
 
   match init_schema(db) {
     case Error(e) -> {
       db.close
-      return Result.Error("Failed to initialize schema: ${e}")
+      return Result.Error('Failed to initialize schema: ${e}')
     }
-    case Ok(_) -> { }
+    case Ok(_) -> {}
   }
 
   # Run migrations for existing databases
-  let _ = migrate_schema(db)
+  match migrate_schema(db) {
+    case Error(e) -> {
+      db.close
+      return Result.Error('Failed to migrate schema: ${e}')
+    }
+    case Ok(_) -> {}
+  }
 
   Result.Ok(db)
 }
@@ -364,154 +464,121 @@ fn handle_command(cmd: DbCommand, db: mut Database, out: Stdout) {
     case Add(content, tags, scope, pin) -> {
       match add_memory(db, content, tags, scope, pin) {
         case Ok(result) -> {
-          let dedup = if result.deduplicated { "true" } else { "false" }
-          let contra = if result.contradiction { "true" } else { "false" }
-          let mut json = "{\"success\": true, \"id\": ${result.id}, \"deduplicated\": ${dedup}, \"contradiction\": ${contra}"
-          match result.contradicts_id {
-            case Some(cid) -> json = json + ", \"contradicts_id\": ${cid}"
-            case None -> {}
+          let dedup = if result.deduplicated { 'true' } else { 'false' }
+          let contra = if result.contradiction { 'true' } else { 'false' }
+          let mut json = '{"success": true, "id": ${result.id}, "deduplicated": ${dedup}, "contradiction": ${contra}'
+
+          if result.contradiction {
+            json = json + ', "contradicts_count": ${result.contradicts_count}'
+
+            match result.contradicts_id {
+              case Some(cid) -> json = json + ', "contradicts_id": ${cid}'
+              case None -> {}
+            }
           }
-          json = json + "}"
+
+          json = json + '}'
           out.print(json)
         }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Recall(query, scope, top) -> {
       match search_memories(db, query, scope, top) {
-        case Ok(mems) -> {
-          output_memories(mems, out)
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(mems) -> output_memories(mems, out)
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case List(scope, status, limit) -> {
       match list_memories(db, scope, status, limit) {
-        case Ok(mems) -> {
-          output_memories(mems, out)
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(mems) -> output_memories(mems, out)
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Forget(id) -> {
       match forget_memory(db, id) {
-        case Ok(deleted) -> {
-          out.print("{\"success\": ${deleted}}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(deleted) -> out.print('{"success": ${deleted}}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Pin(id) -> {
       match pin_memory(db, id) {
-        case Ok(pinned) -> {
-          out.print("{\"success\": ${pinned}}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(pinned) -> out.print('{"success": ${pinned}}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Unpin(id) -> {
       match unpin_memory(db, id) {
-        case Ok(unpinned) -> {
-          out.print("{\"success\": ${unpinned}}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(unpinned) -> out.print('{"success": ${unpinned}}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Feedback(id, feedback_type) -> {
       match feedback_memory(db, id, feedback_type) {
-        case Ok(updated) -> {
-          out.print("{\"success\": ${updated}}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(updated) -> out.print('{"success": ${updated}}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Maintain(dry_run) -> {
       match maintain_memory(db, dry_run) {
         case Ok(stats) -> {
-          out.print("{\"decayed\": ${stats.decayed}, \"anti_patterns\": ${stats.anti_patterns}, \"pruned\": ${stats.pruned}}")
+          out.print(
+            '{"decayed": ${stats.decayed}, "anti_patterns": ${stats.anti_patterns}, "pruned": ${stats.pruned}}',
+          )
         }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Export -> {
       match export_memories(db) {
-        case Ok(json) -> {
-          out.print(json)
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(json) -> out.print(json)
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Import(file) -> {
       match import_memories(db, file) {
         case Ok(result) -> {
-          let mut json = "{\"success\": true, \"imported\": ${result.imported}, \"failed\": ${result.failed}"
-          if result.first_error != "" {
-            json = json + ", \"first_error\": \"${escape_json(result.first_error)}\""
+          let mut json = '{"success": true, "imported": ${result.imported}, "failed": ${result.failed}'
+
+          if result.first_error != '' {
+            json = json
+              + ', "first_error": "${escape_json(result.first_error)}"'
           }
-          json = json + "}"
+
+          json = json + '}'
           out.print(json)
         }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case AgentsMd(path) -> {
       match generate_agents_md(db, path) {
-        case Ok(_) -> {
-          out.print("{\"success\": true}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(_) -> out.print('{"success": true}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Stats -> {
       match get_stats(db) {
         case Ok(stats) -> {
-          out.print("{\"total\": ${stats.total}, \"active\": ${stats.active}, \"pinned\": ${stats.pinned}, \"anti_pattern\": ${stats.anti_pattern}, \"avg_strength\": ${(stats.avg_strength as Float).to_string}}")
+          out.print(
+            '{"total": ${stats.total}, "active": ${stats.active}, "pinned": ${stats.pinned}, "anti_pattern": ${stats.anti_pattern}, "avg_strength": ${(stats.avg_strength as Float).to_string}}',
+          )
         }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Update(id, content, tags, scope) -> {
       match update_memory(db, id, content, tags, scope) {
         case Ok(new_id) -> {
-          out.print("{\"success\": true, \"new_id\": ${new_id}, \"old_id\": ${id}}")
+          out.print('{"success": true, "new_id": ${new_id}, "old_id": ${id}}')
         }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case History(id) -> {
       match get_history(db, id) {
-        case Ok(mems) -> {
-          output_history(mems, out)
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(mems) -> output_history(mems, out)
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
     case Contradictions(resolve_id) -> {
@@ -519,33 +586,23 @@ fn handle_command(cmd: DbCommand, db: mut Database, out: Stdout) {
         case Some(rid) -> {
           match resolve_contradiction(db, rid) {
             case Ok(resolved) -> {
-              out.print("{\"success\": ${resolved}, \"resolved_id\": ${rid}}")
+              out.print('{"success": ${resolved}, "resolved_id": ${rid}}')
             }
-            case Error(e) -> {
-              out.print("{\"error\": \"${escape_json(e)}\"}")
-            }
+            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
           }
         }
         case None -> {
           match list_contradictions(db) {
-            case Ok(mems) -> {
-              output_contradictions(mems, out)
-            }
-            case Error(e) -> {
-              out.print("{\"error\": \"${escape_json(e)}\"}")
-            }
+            case Ok(mems) -> output_contradictions(mems, out)
+            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
           }
         }
       }
     }
     case RebuildFts -> {
       match rebuild_fts(db) {
-        case Ok(count) -> {
-          out.print("{\"success\": true, \"indexed\": ${count}}")
-        }
-        case Error(e) -> {
-          out.print("{\"error\": \"${escape_json(e)}\"}")
-        }
+        case Ok(count) -> out.print('{"success": true, "indexed": ${count}}')
+        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
   }
@@ -558,18 +615,27 @@ type pub AddResult {
   let @contradicts_id: Option[Int]
 }
 
-fn add_memory(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
-  match exec_sql(db, "BEGIN") {
+fn add_memory(
+  db: mut Database,
+  content: String,
+  tags: String,
+  scope: String,
+  pin: Bool,
+) -> Result[AddResult, String] {
+  match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
+
   match add_memory_inner(db, content, tags, scope, pin) {
     case Ok(v) -> {
-      let _ = exec_sql(db, "COMMIT")
+      let _ = exec_sql(db, 'COMMIT')
+
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, "ROLLBACK")
+      let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
@@ -578,20 +644,27 @@ fn add_memory(db: mut Database, content: String, tags: String, scope: String, pi
 # Maximum content size: 64KB
 let MAX_CONTENT_SIZE = 65536
 
-fn add_memory_inner(db: mut Database, content: String, tags: String, scope: String, pin: Bool) -> Result[AddResult, String] {
+fn add_memory_inner(
+  db: mut Database,
+  content: String,
+  tags: String,
+  scope: String,
+  pin: Bool,
+) -> Result[AddResult, String] {
   # Enforce maximum content length
   if content.size > MAX_CONTENT_SIZE {
-    return Result.Error("Content exceeds maximum size of 64KB")
+    return Result.Error('Content exceeds maximum size of 64KB')
   }
+
   let hash = sha256_hash(content)
   let simhash_val = simhash(content)
-  let status = if pin { "pinned" } else { "active" }
+  let status = if pin { 'pinned' } else { 'active' }
 
   # Check for exact duplicate first
-  let check_sql = "SELECT id, access_count FROM memories WHERE content_hash = ?"
+  let check_sql = 'SELECT id, access_count FROM memories WHERE content_hash = ?'
   let mut stmt = match db.prepare(check_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match bind_text(mut stmt, 1, hash) {
@@ -609,17 +682,33 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
     existing_id = Option.Some(stmt.column_int(0))
     existing_count = stmt.column_int(1)
   }
+
   stmt.finalize
 
   match existing_id {
     case Some(id) -> {
-      match exec_with_two_ints(db, "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?", existing_count + 1, id) {
+      match
+        exec_with_two_ints(
+          db,
+          "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?",
+          existing_count + 1,
+          id,
+        )
+      {
         case Error(e) -> return Result.Error(e)
         case Ok(_) -> {}
       }
-      return Result.Ok(AddResult(id: id, deduplicated: true, contradiction: false, contradicts_id: Option.None))
+
+      return Result.Ok(
+        AddResult(
+          id: id,
+          deduplicated: true,
+          contradiction: false,
+          contradicts_id: Option.None,
+        ),
+      )
     }
-    case None -> { }
+    case None -> {}
   }
 
   # Check for near-duplicate using SimHash (Hamming distance <= 3)
@@ -634,7 +723,9 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   let near_dup_sql = "SELECT id, access_count, simhash FROM memories WHERE simhash IS NOT NULL AND status != 'superseded' AND (substr(simhash, 1, 2) = ? OR substr(simhash, 3, 2) = ? OR substr(simhash, 5, 2) = ? OR substr(simhash, 7, 2) = ?)"
   let mut near_dup_stmt = match db.prepare(near_dup_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare near-dup check: ${e}")
+    case Error(e) -> {
+      return Result.Error('Failed to prepare near-dup check: ${e}')
+    }
   }
 
   match bind_text(mut near_dup_stmt, 1, band1) {
@@ -644,6 +735,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut near_dup_stmt, 2, band2) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -651,6 +743,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut near_dup_stmt, 3, band3) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -658,6 +751,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut near_dup_stmt, 4, band4) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -673,18 +767,16 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   # Fine-grained Hamming distance check on the filtered candidates
   loop {
     let step_result = near_dup_stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
-    if step_result != SQLITE_ROW {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW { break }
 
     let existing_id = near_dup_stmt.column_int(0)
     let existing_count = near_dup_stmt.column_int(1)
     let existing_simhash_str = near_dup_stmt.column_text(2)
 
-    if existing_simhash_str != "" {
+    if existing_simhash_str != '' {
       let existing_simhash_int = hex_to_int(existing_simhash_str)
       let dist = hamming_distance(new_simhash_int, existing_simhash_int)
 
@@ -695,18 +787,34 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       }
     }
   }
+
   near_dup_stmt.finalize
 
   match near_dup_id {
     case Some(id) -> {
       # Near-duplicate found: increment access count instead of creating new memory
-      match exec_with_two_ints(db, "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?", near_dup_count + 1, id) {
+      match
+        exec_with_two_ints(
+          db,
+          "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?",
+          near_dup_count + 1,
+          id,
+        )
+      {
         case Error(e) -> return Result.Error(e)
         case Ok(_) -> {}
       }
-      return Result.Ok(AddResult(id: id, deduplicated: true, contradiction: false, contradicts_id: Option.None))
+
+      return Result.Ok(
+        AddResult(
+          id: id,
+          deduplicated: true,
+          contradiction: false,
+          contradicts_id: Option.None,
+        ),
+      )
     }
-    case None -> { }
+    case None -> {}
   }
 
   # Check for contradictions before inserting
@@ -719,10 +827,10 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   }
   let has_contradicts = contradicts_id_val >= 0
 
-  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match bind_text(mut insert_stmt, 1, content) {
@@ -732,6 +840,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 2, hash) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -739,6 +848,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 3, tags) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -746,6 +856,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 4, scope) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -753,6 +864,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 5, status) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -760,6 +872,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 6, simhash_val) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -767,6 +880,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   match bind_int(mut insert_stmt, 7, if is_contradiction { 1 } else { 0 }) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -774,6 +888,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
       return Result.Error(e)
     }
   }
+
   if has_contradicts {
     match bind_int(mut insert_stmt, 8, contradicts_id_val) {
       case Ok(_) -> {}
@@ -793,11 +908,10 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   }
 
   let result = insert_stmt.step
+
   insert_stmt.finalize
 
-  if result != SQLITE_DONE {
-    return Result.Error("Insert failed")
-  }
+  if result != SQLITE_DONE { return Result.Error('Insert failed') }
 
   let memory_id = db.last_insert_rowid as Int
 
@@ -806,32 +920,48 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   # (e.g., use `contradictions --resolve` to clear the flag).
   # FTS5 is auto-synced via triggers — no manual indexing needed.
 
-  Result.Ok(AddResult(id: memory_id, deduplicated: false, contradiction: is_contradiction, contradicts_id: if has_contradicts { Option.Some(contradicts_id_val) } else { Option.None }))
+  Result.Ok(
+    AddResult(
+      id: memory_id,
+      deduplicated: false,
+      contradiction: is_contradiction,
+      contradicts_id: if has_contradicts {
+        Option.Some(contradicts_id_val)
+      } else {
+        Option.None
+      },
+    ),
+  )
 }
 
-fn list_memories(db: mut Database, scope_filter: String, status_filter: String, limit: Int) -> Result[Array[Memory], String] {
-  let mut sql = "SELECT ${MEMORY_COLUMNS} FROM memories WHERE 1=1"
+fn list_memories(
+  db: mut Database,
+  scope_filter: String,
+  status_filter: String,
+  limit: Int,
+) -> Result[Array[Memory], String] {
+  let mut sql = 'SELECT ${MEMORY_COLUMNS} FROM memories WHERE 1=1'
 
-  if scope_filter != "" {
-    sql = sql + " AND scope = ?"
-  }
-  if status_filter != "" {
-    sql = sql + " AND status = ?"
+  if scope_filter != '' { sql = sql + ' AND scope = ?' }
+
+  if status_filter != '' {
+    sql = sql + ' AND status = ?'
   } else {
     # By default, exclude superseded and anti-pattern memories
     # consistent with search_memories behavior
     sql = sql + " AND status NOT IN ('superseded', 'anti-pattern')"
   }
 
-  sql = sql + " ORDER BY last_accessed DESC LIMIT ?"
+  sql = sql + ' ORDER BY last_accessed DESC LIMIT ?'
 
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   let mut idx = 1
-  if scope_filter != "" {
+
+  if scope_filter != '' {
     match bind_text(mut stmt, idx, scope_filter) {
       case Ok(_) -> {}
       case Error(e) -> {
@@ -839,9 +969,11 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
         return Result.Error(e)
       }
     }
+
     idx = idx + 1
   }
-  if status_filter != ""{
+
+  if status_filter != '' {
     match bind_text(mut stmt, idx, status_filter) {
       case Ok(_) -> {}
       case Error(e) -> {
@@ -849,8 +981,10 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
         return Result.Error(e)
       }
     }
+
     idx = idx + 1
   }
+
   match bind_int(mut stmt, idx, limit) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -860,43 +994,51 @@ fn list_memories(db: mut Database, scope_filter: String, status_filter: String, 
   }
 
   let mut results = []
+
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
+
     results.push(Memory.from_row(ref stmt))
   }
+
   stmt.finalize
 
   Result.Ok(results)
 }
 
-fn search_memories(db: mut Database, query: String, scope_filter: String, limit: Int) -> Result[Array[Memory], String] {
+fn search_memories(
+  db: mut Database,
+  query: String,
+  scope_filter: String,
+  limit: Int,
+) -> Result[Array[Memory], String] {
   # Use FTS5 for full-text search with bm25 ranking
   # Include bm25 score for combined scoring
   let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, m.storage_strength, m.retrieval_strength, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status NOT IN ('superseded', 'anti-pattern')"
 
-  if scope_filter != "" {
-    sql = sql + " AND m.scope = ?"
-  }
+  if scope_filter != '' { sql = sql + ' AND m.scope = ?' }
 
-  sql = sql + " ORDER BY bm25(memories_fts) LIMIT ?"
+  sql = sql + ' ORDER BY bm25(memories_fts) LIMIT ?'
 
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   let safe_query = sanitize_fts5_query(query)
+
   if query.size == 0 {
     stmt.finalize
     return Result.Ok([])
   }
+
   match bind_text(mut stmt, 1, safe_query) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -906,7 +1048,8 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   }
 
   let mut idx = 2
-  if scope_filter != "" {
+
+  if scope_filter != '' {
     match bind_text(mut stmt, idx, scope_filter) {
       case Ok(_) -> {}
       case Error(e) -> {
@@ -914,8 +1057,10 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
         return Result.Error(e)
       }
     }
+
     idx = idx + 1
   }
+
   match bind_int(mut stmt, idx, limit) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -925,17 +1070,20 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
   }
 
   let mut results = []
+
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
+
     results.push(Memory.from_row_with_score(ref stmt))
   }
+
   stmt.finalize
 
   # Update last_accessed and retrieval_strength for returned memories
@@ -945,13 +1093,16 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
     case Ok(s) -> s
     case Error(_) -> return Result.Ok(results)
   }
+
   for mem in results.iter {
     match touch_stmt.bind_int(1, mem.id) {
-      case Ok(_) -> { let _ = touch_stmt.step }
+      case Ok(_) -> let _ = touch_stmt.step
       case Error(_) -> {}
     }
+
     let _ = touch_stmt.reset
   }
+
   touch_stmt.finalize
 
   Result.Ok(results)
@@ -960,10 +1111,14 @@ fn search_memories(db: mut Database, query: String, scope_filter: String, limit:
 # Execute a SQL statement with a single integer bind parameter.
 # Returns the number of rows changed.
 # Bind a text parameter, finalizing the statement on error.
-fn bind_text(db_stmt: mut Statement, idx: Int, val: String) -> Result[Nil, String] {
+fn bind_text(
+  db_stmt: mut Statement,
+  idx: Int,
+  val: String,
+) -> Result[Nil, String] {
   match db_stmt.bind_text(idx, val) {
     case Ok(_) -> Result.Ok(nil)
-    case Error(e) -> Result.Error("Failed to bind: ${e}")
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
   }
 }
 
@@ -971,7 +1126,7 @@ fn bind_text(db_stmt: mut Statement, idx: Int, val: String) -> Result[Nil, Strin
 fn bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
   match db_stmt.bind_int(idx, val) {
     case Ok(_) -> Result.Ok(nil)
-    case Error(e) -> Result.Error("Failed to bind: ${e}")
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
   }
 }
 
@@ -979,7 +1134,7 @@ fn bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
 fn bind_null(db_stmt: mut Statement, idx: Int) -> Result[Nil, String] {
   match db_stmt.bind_null(idx) {
     case Ok(_) -> Result.Ok(nil)
-    case Error(e) -> Result.Error("Failed to bind: ${e}")
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
   }
 }
 
@@ -991,85 +1146,80 @@ fn exec_sql(db: mut Database, sql: String) -> Result[Nil, String] {
   }
 }
 
-fn exec_with_int(db: mut Database, sql: String, value: Int) -> Result[Int, String] {
+fn exec_with_int(
+  db: mut Database,
+  sql: String,
+  value: Int,
+) -> Result[Int, String] {
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match stmt.bind_int(1, value) {
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error('Failed to bind: ${e}')
     }
     case Ok(_) -> {}
   }
 
   let _ = stmt.step
+
   stmt.finalize
   Result.Ok(db.changes)
 }
 
 # Execute a SQL statement with two integer bind parameters.
 # Returns the number of rows changed.
-fn exec_with_two_ints(db: mut Database, sql: String, val1: Int, val2: Int) -> Result[Int, String] {
+fn exec_with_two_ints(
+  db: mut Database,
+  sql: String,
+  val1: Int,
+  val2: Int,
+) -> Result[Int, String] {
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match stmt.bind_int(1, val1) {
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error('Failed to bind: ${e}')
     }
     case Ok(_) -> {}
   }
+
   match stmt.bind_int(2, val2) {
     case Error(e) -> {
       stmt.finalize
-      return Result.Error("Failed to bind: ${e}")
+      return Result.Error('Failed to bind: ${e}')
     }
     case Ok(_) -> {}
   }
 
   let _ = stmt.step
+
   stmt.finalize
   Result.Ok(db.changes)
 }
 
-fn memory_exists(db: mut Database, id: Int) -> Result[Bool, String] {
-  let sql = "SELECT 1 FROM memories WHERE id = ?"
-  let mut stmt = match db.prepare(sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
-  }
-
-  match bind_int(mut stmt, 1, id) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  let exists = stmt.step == SQLITE_ROW
-  stmt.finalize
-  Result.Ok(exists)
-}
-
 fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match exec_sql(db, "BEGIN") {
+  match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
+
   match forget_memory_inner(db, id) {
     case Ok(v) -> {
-      let _ = exec_sql(db, "COMMIT")
+      let _ = exec_sql(db, 'COMMIT')
+
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, "ROLLBACK")
+      let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
@@ -1077,30 +1227,46 @@ fn forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
 
 fn forget_memory_inner(db: mut Database, id: Int) -> Result[Bool, String] {
   # FTS5 is auto-synced via DELETE trigger — no manual cleanup needed.
-  match exec_with_int(db, "DELETE FROM memories WHERE id = ?", id) {
+  match exec_with_int(db, 'DELETE FROM memories WHERE id = ?', id) {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
   }
 }
 
 fn pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match exec_with_int(db, "UPDATE memories SET status = 'pinned', updated_at = datetime('now') WHERE id = ? AND status != 'pinned'", id) {
+  match
+    exec_with_int(
+      db,
+      "UPDATE memories SET status = 'pinned', updated_at = datetime('now') WHERE id = ? AND status != 'pinned'",
+      id,
+    )
+  {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
   }
 }
 
 fn unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
-  match exec_with_int(db, "UPDATE memories SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'pinned'", id) {
+  match
+    exec_with_int(
+      db,
+      "UPDATE memories SET status = 'active', updated_at = datetime('now') WHERE id = ? AND status = 'pinned'",
+      id,
+    )
+  {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
   }
 }
 
-fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[Bool, String] {
-  let sql = if feedback_type == "helpful" {
+fn feedback_memory(
+  db: mut Database,
+  id: Int,
+  feedback_type: String,
+) -> Result[Bool, String] {
+  let sql = if feedback_type == 'helpful' {
     "UPDATE memories SET helpful_count = helpful_count + 1, updated_at = datetime('now') WHERE id = ?"
-  } else if feedback_type == "harmful" {
+  } else if feedback_type == 'harmful' {
     "UPDATE memories SET harmful_count = harmful_count + 1, updated_at = datetime('now') WHERE id = ?"
   } else {
     return Result.Error("Invalid feedback type: must be 'helpful' or 'harmful'")
@@ -1113,39 +1279,48 @@ fn feedback_memory(db: mut Database, id: Int, feedback_type: String) -> Result[B
 }
 
 # Version chain: update a memory by creating a new version
-fn update_memory(db: mut Database, id: Int, content: String, tags: String, scope: String) -> Result[Int, String] {
-  match exec_sql(db, "BEGIN") {
+fn update_memory(
+  db: mut Database,
+  id: Int,
+  content: String,
+  tags: String,
+  scope: String,
+) -> Result[Int, String] {
+  match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
+
   match update_memory_inner(db, id, content, tags, scope) {
     case Ok(v) -> {
-      let _ = exec_sql(db, "COMMIT")
+      let _ = exec_sql(db, 'COMMIT')
+
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, "ROLLBACK")
+      let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
 }
 
-fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String, scope: String) -> Result[Int, String] {
+fn update_memory_inner(
+  db: mut Database,
+  id: Int,
+  content: String,
+  tags: String,
+  scope: String,
+) -> Result[Int, String] {
   if content.size > MAX_CONTENT_SIZE {
-    return Result.Error("Content exceeds maximum size of 64KB")
+    return Result.Error('Content exceeds maximum size of 64KB')
   }
 
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
-
-  # Get the old memory to copy metadata
-  let get_sql = "SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?"
+  # Get the old memory to copy metadata (also serves as existence check)
+  let get_sql = 'SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?'
   let mut get_stmt = match db.prepare(get_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match bind_int(mut get_stmt, 1, id) {
@@ -1162,27 +1337,30 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   let mut old_contradicts_id: Option[Int] = Option.None
 
   if get_stmt.step == SQLITE_ROW {
-    if tags == "" {
-      old_tags = get_stmt.column_text(0)
-    }
-    if scope == "" {
-      old_scope = get_stmt.column_text(1)
-    }
+    if tags == '' { old_tags = get_stmt.column_text(0) }
+
+    if scope == '' { old_scope = get_stmt.column_text(1) }
+
     old_contradiction = get_stmt.column_int(2)
+
     let contradicts_raw = get_stmt.column_int(3)
-    if contradicts_raw > 0 {
-      old_contradicts_id = Option.Some(contradicts_raw)
-    }
+
+    if contradicts_raw > 0 { old_contradicts_id = Option.Some(contradicts_raw) }
+  } else {
+    get_stmt.finalize
+    return Result.Error('Memory not found: ${id}')
   }
+
   get_stmt.finalize
 
   # Check for content_hash collision before superseding old memory
   let hash = sha256_hash(content)
-  let collision_sql = "SELECT 1 FROM memories WHERE content_hash = ? AND id != ?"
+  let collision_sql = 'SELECT 1 FROM memories WHERE content_hash = ? AND id != ?'
   let mut coll_stmt = match db.prepare(collision_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
+
   match bind_text(mut coll_stmt, 1, hash) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1190,6 +1368,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_int(mut coll_stmt, 2, id) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1197,15 +1376,24 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   let has_collision = coll_stmt.step == SQLITE_ROW
+
   coll_stmt.finalize
+
   if has_collision {
-    return Result.Error("A memory with identical content already exists")
+    return Result.Error('A memory with identical content already exists')
   }
 
   # Mark old memory as superseded
   # FTS5 is auto-synced via UPDATE trigger — no manual cleanup needed.
-  match exec_with_int(db, "UPDATE memories SET status = 'superseded', updated_at = datetime('now') WHERE id = ?", id) {
+  match
+    exec_with_int(
+      db,
+      "UPDATE memories SET status = 'superseded', updated_at = datetime('now') WHERE id = ?",
+      id,
+    )
+  {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
@@ -1215,7 +1403,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, parent_id, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)"
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match bind_text(mut insert_stmt, 1, content) {
@@ -1225,6 +1413,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 2, hash) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1232,6 +1421,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 3, old_tags) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1239,6 +1429,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 4, old_scope) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1246,6 +1437,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_text(mut insert_stmt, 5, simhash_val) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1253,6 +1445,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_int(mut insert_stmt, 6, id) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1260,6 +1453,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match bind_int(mut insert_stmt, 7, old_contradiction) {
     case Ok(_) -> {}
     case Error(e) -> {
@@ -1267,6 +1461,7 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
       return Result.Error(e)
     }
   }
+
   match old_contradicts_id {
     case Some(cid) -> {
       match bind_int(mut insert_stmt, 8, cid) {
@@ -1289,11 +1484,10 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
   }
 
   let result = insert_stmt.step
+
   insert_stmt.finalize
 
-  if result != SQLITE_DONE {
-    return Result.Error("Insert failed")
-  }
+  if result != SQLITE_DONE { return Result.Error('Insert failed') }
 
   let new_id = db.last_insert_rowid as Int
   # FTS5 is auto-synced via INSERT trigger — no manual indexing needed.
@@ -1303,19 +1497,13 @@ fn update_memory_inner(db: mut Database, id: Int, content: String, tags: String,
 
 # Get version history for a memory (follow parent_id chain)
 fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
-  match memory_exists(db, id) {
-    case Ok(exists) if !exists -> return Result.Error("Memory not found: ${id}")
-    case Error(e) -> return Result.Error(e)
-    case _ -> {}
-  }
-
   let mut history: Array[Memory] = []
 
   # Get current memory
-  let sql = "SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?"
+  let sql = 'SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?'
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   match bind_int(mut stmt, 1, id) {
@@ -1331,31 +1519,37 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
   if stmt.step == SQLITE_ROW {
     current_id = Option.Some(stmt.column_int(0))
     history.push(Memory.from_row_with_parent(ref stmt))
+  } else {
+    stmt.finalize
+    return Result.Error('Memory not found: ${id}')
   }
+
   stmt.finalize
 
   # Follow parent chain
   let mut visited: Array[Int] = []
+
   match current_id {
     case Some(cid) -> {
       visited.push(cid)
+
       let mut next_parent = get_parent_id(db, cid)
+
       loop {
         match next_parent {
           case Some(pid) -> {
             # Check if already visited
             let mut already_visited = false
+
             for v in visited.iter {
-              if v == pid {
-                already_visited = true
-              }
+              if v == pid { already_visited = true }
             }
-            if already_visited {
-              break
-            }
+
+            if already_visited { break }
+
             visited.push(pid)
 
-            let parent_sql = "SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?"
+            let parent_sql = 'SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?'
             let mut parent_stmt = match db.prepare(parent_sql) {
               case Ok(s) -> s
               case Error(_) -> break
@@ -1366,7 +1560,7 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
                 parent_stmt.finalize
                 break
               }
-              case Ok(_) -> { }
+              case Ok(_) -> {}
             }
 
             if parent_stmt.step == SQLITE_ROW {
@@ -1375,20 +1569,21 @@ fn get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
             } else {
               next_parent = Option.None
             }
+
             parent_stmt.finalize
           }
           case None -> break
         }
       }
     }
-    case None -> { }
+    case None -> {}
   }
 
   Result.Ok(history)
 }
 
 fn get_parent_id(db: mut Database, id: Int) -> Option[Int] {
-  let sql = "SELECT parent_id FROM memories WHERE id = ?"
+  let sql = 'SELECT parent_id FROM memories WHERE id = ?'
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(_) -> return Option.None
@@ -1399,43 +1594,44 @@ fn get_parent_id(db: mut Database, id: Int) -> Option[Int] {
       stmt.finalize
       return Option.None
     }
-    case Ok(_) -> { }
+    case Ok(_) -> {}
   }
 
   let result = if stmt.step == SQLITE_ROW {
     let parent_id = stmt.column_int(0)
-    if parent_id > 0 {
-      Option.Some(parent_id)
-    } else {
-      Option.None
-    }
+
+    if parent_id > 0 { Option.Some(parent_id) } else { Option.None }
   } else {
     Option.None
   }
+
   stmt.finalize
   result
 }
 
 # List all flagged contradictions
 fn list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
-  let sql = "SELECT ${MEMORY_COLUMNS}, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC"
+  let sql = 'SELECT ${MEMORY_COLUMNS}, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC'
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   let mut results: Array[Memory] = []
+
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
+
     results.push(Memory.from_row_with_contradicts(ref stmt))
   }
+
   stmt.finalize
 
   Result.Ok(results)
@@ -1443,7 +1639,13 @@ fn list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
 
 # Resolve a contradiction by keeping both memories
 fn resolve_contradiction(db: mut Database, id: Int) -> Result[Bool, String] {
-  match exec_with_int(db, "UPDATE memories SET is_contradiction = 0, contradicts_id = NULL, updated_at = datetime('now') WHERE id = ?", id) {
+  match
+    exec_with_int(
+      db,
+      "UPDATE memories SET is_contradiction = 0, contradicts_id = NULL, updated_at = datetime('now') WHERE id = ?",
+      id,
+    )
+  {
     case Ok(changes) -> Result.Ok(changes > 0)
     case Error(e) -> Result.Error(e)
   }
@@ -1455,23 +1657,27 @@ type pub MaintainStats {
   let @pruned: Int
 }
 
-fn maintain_memory(db: mut Database, dry_run: Bool) -> Result[MaintainStats, String] {
-  if dry_run {
-    return maintain_memory_preview(db)
-  }
+fn maintain_memory(
+  db: mut Database,
+  dry_run: Bool,
+) -> Result[MaintainStats, String] {
+  if dry_run { return maintain_memory_preview(db) }
 
-  match exec_sql(db, "BEGIN") {
+  match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
+
   match maintain_memory_inner(db) {
     case Ok(v) -> {
-      let _ = exec_sql(db, "COMMIT")
-      let _ = exec_sql(db, "PRAGMA wal_checkpoint(TRUNCATE)")
+      let _ = exec_sql(db, 'COMMIT')
+      let _ = exec_sql(db, 'PRAGMA wal_checkpoint(TRUNCATE)')
+
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, "ROLLBACK")
+      let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
@@ -1482,42 +1688,51 @@ fn maintain_memory_preview(db: mut Database) -> Result[MaintainStats, String] {
   let decay_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
   let mut decay_stmt = match db.prepare(decay_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
   let decayed = if decay_stmt.step == SQLITE_ROW {
     decay_stmt.column_int(0)
   } else {
     0
   }
+
   decay_stmt.finalize
 
   # Count how many would be marked anti-pattern
   let anti_sql = "SELECT COUNT(*) FROM memories WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
   let mut anti_stmt = match db.prepare(anti_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
   let anti_patterns = if anti_stmt.step == SQLITE_ROW {
     anti_stmt.column_int(0)
   } else {
     0
   }
+
   anti_stmt.finalize
 
   # Count how many would be pruned
   let prune_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
   let mut prune_stmt = match db.prepare(prune_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
   let pruned = if prune_stmt.step == SQLITE_ROW {
     prune_stmt.column_int(0)
   } else {
     0
   }
+
   prune_stmt.finalize
 
-  Result.Ok(MaintainStats(decayed: decayed, anti_patterns: anti_patterns, pruned: pruned))
+  Result.Ok(
+    MaintainStats(
+      decayed: decayed,
+      anti_patterns: anti_patterns,
+      pruned: pruned,
+    ),
+  )
 }
 
 fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
@@ -1534,9 +1749,10 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
   let mut decay_stmt = match db.prepare(decay_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare decay: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare decay: ${e}')
   }
   let _ = decay_stmt.step
+
   decayed = db.changes
   decay_stmt.finalize
 
@@ -1544,9 +1760,10 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let anti_sql = "UPDATE memories SET status = 'anti-pattern', is_negative = 1, updated_at = datetime('now') WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
   let mut anti_stmt = match db.prepare(anti_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare anti-pattern: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare anti-pattern: ${e}')
   }
   let _ = anti_stmt.step
+
   anti_patterns = db.changes
   anti_stmt.finalize
 
@@ -1555,13 +1772,20 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
   let mut prune_stmt = match db.prepare(prune_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare prune: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare prune: ${e}')
   }
   let _ = prune_stmt.step
+
   pruned = db.changes
   prune_stmt.finalize
 
-  Result.Ok(MaintainStats(decayed: decayed, anti_patterns: anti_patterns, pruned: pruned))
+  Result.Ok(
+    MaintainStats(
+      decayed: decayed,
+      anti_patterns: anti_patterns,
+      pruned: pruned,
+    ),
+  )
 }
 
 type pub MemoryStats {
@@ -1576,7 +1800,7 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
   let sql = "SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'anti-pattern' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   let result = if stmt.step == SQLITE_ROW {
@@ -1585,11 +1809,18 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
       active: stmt.column_int(1),
       pinned: stmt.column_int(2),
       anti_pattern: stmt.column_int(3),
-      avg_strength: stmt.column_double(4)
+      avg_strength: stmt.column_double(4),
     )
   } else {
-    MemoryStats(total: 0, active: 0, pinned: 0, anti_pattern: 0, avg_strength: 0.0 as Float64)
+    MemoryStats(
+      total: 0,
+      active: 0,
+      pinned: 0,
+      anti_pattern: 0,
+      avg_strength: 0.0 as Float64,
+    )
   }
+
   stmt.finalize
 
   Result.Ok(result)
@@ -1598,22 +1829,19 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
 fn rebuild_fts(db: mut Database) -> Result[Int, String] {
   # Content-synced FTS5 supports a simple rebuild command
   match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
-    case Error(e) -> return Result.Error("Failed to rebuild FTS: ${e}")
+    case Error(e) -> return Result.Error('Failed to rebuild FTS: ${e}')
     case Ok(_) -> {}
   }
 
   # Return count of indexed memories
-  let sql = "SELECT COUNT(*) FROM memories"
+  let sql = 'SELECT COUNT(*) FROM memories'
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to count: ${e}")
+    case Error(e) -> return Result.Error('Failed to count: ${e}')
   }
 
-  let count = if stmt.step == SQLITE_ROW {
-    stmt.column_int(0)
-  } else {
-    0
-  }
+  let count = if stmt.step == SQLITE_ROW { stmt.column_int(0) } else { 0 }
+
   stmt.finalize
 
   Result.Ok(count)
@@ -1621,145 +1849,169 @@ fn rebuild_fts(db: mut Database) -> Result[Int, String] {
 
 fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   # Validate path to prevent traversal attacks
-  if contains_substring(path, "..") {
-    return Result.Error("Path must not contain '..'")
-  }
+  if path.contains?('..') { return Result.Error("Path must not contain '..'") }
+
   # Block absolute paths except /tmp for testing
   if path.size > 0 {
     let path_bytes = path.to_byte_array
+
     match path_bytes.get(0) {
       case Ok(47) -> {
-        if !contains_substring(path, "/tmp") {
-          return Result.Error("Absolute paths are not allowed (except /tmp)")
+        if !path.contains?('/tmp') {
+          return Result.Error('Absolute paths are not allowed (except /tmp)')
         }
       }
       case _ -> {}
     }
   }
+
   # Get all pinned memories to include in AGENTS.md
   let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  let mut pinned_content = ""
+  let mut pinned_content = ''
+
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
+
     let content = stmt.column_text(0)
     let tags = stmt.column_text(1)
     let scope = stmt.column_text(2)
-    pinned_content = pinned_content + "- " + content + " (tags: " + tags + ", scope: " + scope + ")\n"
+
+    pinned_content = pinned_content
+      + '- '
+      + content
+      + ' (tags: '
+      + tags
+      + ', scope: '
+      + scope
+      + ')\n'
   }
+
   stmt.finalize
 
   # Get anti-patterns to include as warnings
   let anti_sql = "SELECT content FROM memories WHERE status = 'anti-pattern' ORDER BY harmful_count DESC LIMIT 10"
   let mut anti_stmt = match db.prepare(anti_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  let mut anti_content = ""
+  let mut anti_content = ''
+
   loop {
     let step_result = anti_stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       anti_stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
+
     let content = anti_stmt.column_text(0)
-    anti_content = anti_content + "- " + content + "\n"
+
+    anti_content = anti_content + '- ' + content + '\n'
   }
+
   anti_stmt.finalize
 
   # Build the AGENTS.md content
-  let mut output = "# recalldory Memories\n\n"
-  output = output + "Auto-generated by `recalldory agents-md`. Do not edit manually.\n\n"
+  let mut output = '# recalldory Memories\n\n'
 
-  if pinned_content != "" {
-    output = output + "## Pinned Memories\n\n" + pinned_content + "\n"
+  output = output
+    + 'Auto-generated by `recalldory agents-md`. Do not edit manually.\n\n'
+
+  if pinned_content != '' {
+    output = output + '## Pinned Memories\n\n' + pinned_content + '\n'
   }
 
-  if anti_content != "" {
-    output = output + "## Anti-Patterns (Avoid)\n\n" + anti_content + "\n"
+  if anti_content != '' {
+    output = output + '## Anti-Patterns (Avoid)\n\n' + anti_content + '\n'
   }
 
-  if pinned_content == "" and anti_content == "" {
-    output = output + "No pinned memories or anti-patterns found.\n"
+  if pinned_content == '' and anti_content == '' {
+    output = output + 'No pinned memories or anti-patterns found.\n'
   }
 
   # Write to file at the specified path
-  let file_path = "${path}/AGENTS.md".to_path
+  let file_path = '${path}/AGENTS.md'.to_path
+
   match WriteOnlyFile.new(file_path) {
     case Ok(f) -> {
       let mut file = f
+
       match file.write(output.to_byte_array) {
         case Ok(_) -> {
           let _ = file.flush
+
           Result.Ok(nil)
         }
-        case Error(e) -> Result.Error("Failed to write AGENTS.md: ${e}")
+        case Error(e) -> Result.Error('Failed to write AGENTS.md: ${e}')
       }
     }
-    case Error(e) -> Result.Error("Failed to open AGENTS.md for writing: ${e}")
+    case Error(e) -> Result.Error('Failed to open AGENTS.md for writing: ${e}')
   }
 }
 
 fn export_memories(db: mut Database) -> Result[String, String] {
-  let sql = "SELECT ${MEMORY_COLUMNS} FROM memories ORDER BY created_at DESC"
+  let sql = 'SELECT ${MEMORY_COLUMNS} FROM memories ORDER BY created_at DESC'
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
   let mut items: Array[Json] = []
 
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
     if step_result != SQLITE_ROW {
       stmt.finalize
-      return Result.Error("Query failed")
+      return Result.Error('Query failed')
     }
 
     let mut obj: Map[String, Json] = Map.new
-    obj.set("id", Json.Int(stmt.column_int(0)))
-    obj.set("content", Json.String(stmt.column_text(1)))
-    obj.set("content_hash", Json.String(stmt.column_text(2)))
-    obj.set("summary", Json.String(stmt.column_text(3)))
-    obj.set("tags", Json.String(stmt.column_text(4)))
-    obj.set("scope", Json.String(stmt.column_text(5)))
-    obj.set("status", Json.String(stmt.column_text(6)))
-    obj.set("is_negative", Json.Int(stmt.column_int(7)))
-    obj.set("strength", Json.Float(stmt.column_double(8) as Float))
-    obj.set("access_count", Json.Int(stmt.column_int(9)))
-    obj.set("decay_rate", Json.Float(stmt.column_double(10) as Float))
-    obj.set("helpful_count", Json.Int(stmt.column_int(11)))
-    obj.set("harmful_count", Json.Int(stmt.column_int(12)))
-    obj.set("created_at", Json.String(stmt.column_text(13)))
-    obj.set("updated_at", Json.String(stmt.column_text(14)))
-    obj.set("last_accessed", Json.String(stmt.column_text(15)))
-    obj.set("storage_strength", Json.Float(stmt.column_double(16) as Float))
-    obj.set("retrieval_strength", Json.Float(stmt.column_double(17) as Float))
+
+    obj.set('id', Json.Int(stmt.column_int(0)))
+    obj.set('content', Json.String(stmt.column_text(1)))
+    obj.set('content_hash', Json.String(stmt.column_text(2)))
+    obj.set('summary', Json.String(stmt.column_text(3)))
+    obj.set('tags', Json.String(stmt.column_text(4)))
+    obj.set('scope', Json.String(stmt.column_text(5)))
+    obj.set('status', Json.String(stmt.column_text(6)))
+    obj.set('is_negative', Json.Int(stmt.column_int(7)))
+    obj.set('strength', Json.Float(stmt.column_double(8) as Float))
+    obj.set('access_count', Json.Int(stmt.column_int(9)))
+    obj.set('decay_rate', Json.Float(stmt.column_double(10) as Float))
+    obj.set('helpful_count', Json.Int(stmt.column_int(11)))
+    obj.set('harmful_count', Json.Int(stmt.column_int(12)))
+    obj.set('created_at', Json.String(stmt.column_text(13)))
+    obj.set('updated_at', Json.String(stmt.column_text(14)))
+    obj.set('last_accessed', Json.String(stmt.column_text(15)))
+    obj.set('storage_strength', Json.Float(stmt.column_double(16) as Float))
+    obj.set('retrieval_strength', Json.Float(stmt.column_double(17) as Float))
     items.push(Json.Object(obj))
   }
+
   stmt.finalize
 
   let mut root: Map[String, Json] = Map.new
-  root.set("memories", Json.Array(items))
-  root.set("exported_at", Json.String(get_timestamp(db)))
+
+  root.set('memories', Json.Array(items))
+  root.set('exported_at', Json.String(get_timestamp(db)))
   Result.Ok(Json.Object(root).to_pretty_string)
 }
 
@@ -1769,12 +2021,15 @@ type pub ImportResult {
   let @first_error: String
 }
 
-fn import_memories(db: mut Database, file: String) -> Result[ImportResult, String] {
+fn import_memories(
+  db: mut Database,
+  file: String,
+) -> Result[ImportResult, String] {
   # Read file contents
   let path = file.to_path
   let mut f = match ReadOnlyFile.new(path) {
     case Ok(file) -> file
-    case Error(_) -> return Result.Error("Failed to open file: ${file}")
+    case Error(_) -> return Result.Error('Failed to open file: ${file}')
   }
 
   let mut bytes = ByteArray.new
@@ -1783,19 +2038,19 @@ fn import_memories(db: mut Database, file: String) -> Result[ImportResult, Strin
 
   # Validate import size
   if content.size > 10_000_000 {
-    return Result.Error("Import file exceeds maximum size of 10MB")
+    return Result.Error('Import file exceeds maximum size of 10MB')
   }
 
   # Create buffer and parse JSON
   let buffer = Buffer.new(content)
   let json = match Json.parse(buffer) {
     case Ok(j) -> j
-    case Error(_) -> return Result.Error("Failed to parse JSON")
+    case Error(_) -> return Result.Error('Failed to parse JSON')
   }
 
   # Use Query to access memories array
   let q = json.query
-  let memories_q = q.key("memories")
+  let memories_q = q.key('memories')
 
   # Get the array
   let memories = match memories_q.as_array {
@@ -1804,119 +2059,214 @@ fn import_memories(db: mut Database, file: String) -> Result[ImportResult, Strin
   }
 
   if memories.size > 10_000 {
-    return Result.Error("Import exceeds maximum of 10000 memories")
+    return Result.Error('Import exceeds maximum of 10000 memories')
   }
 
-  match exec_sql(db, "BEGIN") {
+  match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
+
   match import_memories_inner(db, memories) {
     case Ok(v) -> {
-      let _ = exec_sql(db, "COMMIT")
+      let _ = exec_sql(db, 'COMMIT')
+
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, "ROLLBACK")
+      let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
 }
 
-fn import_memories_inner(db: mut Database, memories: ref Array[Json]) -> Result[ImportResult, String] {
+fn import_memories_inner(
+  db: mut Database,
+  memories: ref Array[Json],
+) -> Result[ImportResult, String] {
   let mut count = 0
   let mut failed = 0
-  let mut first_error = ""
+  let mut first_error = ''
 
   for mem in memories.iter {
     # Get content from each memory object
-    let content_q = mem.query.key("content")
+    let content_q = mem.query.key('content')
     let mem_content = match content_q.as_string {
       case Some(s) -> s
-      case None -> ""
+      case None -> ''
     }
 
-    if mem_content != "" {
+    if mem_content != '' {
       # Extract tags (optional)
-      let tags = match mem.query.key("tags").as_string {
+      let tags = match mem.query.key('tags').as_string {
         case Some(s) -> s
-        case None -> ""
+        case None -> ''
       }
 
       # Extract scope (optional)
-      let scope = match mem.query.key("scope").as_string {
+      let scope = match mem.query.key('scope').as_string {
         case Some(s) -> s
-        case None -> "project"
+        case None -> 'project'
       }
 
       # Extract status (optional)
-      let status = match mem.query.key("status").as_string {
+      let status = match mem.query.key('status').as_string {
         case Some(s) -> s
-        case None -> "active"
+        case None -> 'active'
       }
 
-      let pin = status == "pinned"
+      let pin = status == 'pinned'
 
       match add_memory_inner(db, mem_content, tags, scope, pin) {
         case Ok(result) -> {
           # Restore strength/feedback fields if present in export
+          # Uses parameterized queries to prevent SQL injection
           let new_id = result.id
-          let mut update_sql = "UPDATE memories SET updated_at = datetime('now')"
+          let mut set_clauses: Array[String] = []
+          let mut float_vals: Array[Float] = []
+          let mut int_vals: Array[Int] = []
 
-          match mem.query.key("storage_strength").as_float {
-            case Some(v) -> update_sql = update_sql + ", storage_strength = ${v}"
-            case None -> {}
-          }
-          match mem.query.key("retrieval_strength").as_float {
-            case Some(v) -> update_sql = update_sql + ", retrieval_strength = ${v}"
-            case None -> {}
-          }
-          match mem.query.key("helpful_count").as_int {
-            case Some(v) -> update_sql = update_sql + ", helpful_count = ${v}"
-            case None -> {}
-          }
-          match mem.query.key("harmful_count").as_int {
-            case Some(v) -> update_sql = update_sql + ", harmful_count = ${v}"
-            case None -> {}
-          }
-          match mem.query.key("access_count").as_int {
-            case Some(v) -> update_sql = update_sql + ", access_count = ${v}"
+          match mem.query.key('storage_strength').as_float {
+            case Some(v) -> {
+              set_clauses.push('storage_strength = ?')
+              float_vals.push(v)
+            }
             case None -> {}
           }
 
-          update_sql = update_sql + " WHERE id = ${new_id}"
-          let _ = db.exec(update_sql)
+          match mem.query.key('retrieval_strength').as_float {
+            case Some(v) -> {
+              set_clauses.push('retrieval_strength = ?')
+              float_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('helpful_count').as_int {
+            case Some(v) -> {
+              set_clauses.push('helpful_count = ?')
+              int_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('harmful_count').as_int {
+            case Some(v) -> {
+              set_clauses.push('harmful_count = ?')
+              int_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('access_count').as_int {
+            case Some(v) -> {
+              set_clauses.push('access_count = ?')
+              int_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          if set_clauses.size > 0 {
+            # Build SET clause string without Array.join
+            let mut clauses = ''
+            let mut first = true
+
+            for c in set_clauses.iter {
+              if first {
+                clauses = c
+                first = false
+              } else {
+                clauses = clauses + ', ' + c
+              }
+            }
+
+            let update_sql = 'UPDATE memories SET ${clauses} WHERE id = ?'
+
+            match db.prepare(update_sql) {
+              case Ok(s) -> {
+                let mut stmt = s
+                let mut idx = 1
+                let mut ok = true
+
+                for v in float_vals.iter {
+                  if !ok { break }
+
+                  match stmt.bind_double(idx, v as Float64) {
+                    case Ok(_) -> {}
+                    case Error(_) -> ok = false
+                  }
+
+                  idx = idx + 1
+                }
+
+                for v in int_vals.iter {
+                  if !ok { break }
+
+                  match stmt.bind_int(idx, v) {
+                    case Ok(_) -> {}
+                    case Error(_) -> ok = false
+                  }
+
+                  idx = idx + 1
+                }
+
+                if ok {
+                  match stmt.bind_int(idx, new_id) {
+                    case Ok(_) -> {}
+                    case Error(_) -> ok = false
+                  }
+                }
+
+                if ok { let _ = stmt.step }
+
+                stmt.finalize
+              }
+              case Error(e) -> {
+                failed = failed + 1
+
+                if first_error == '' { first_error = e }
+              }
+            }
+          }
 
           # Recalculate combined strength from the restored values
-          let _ = db.exec("UPDATE memories SET strength = 0.7 * retrieval_strength + 0.3 * (storage_strength / 10.0) WHERE id = ${new_id}")
+          match
+            exec_with_int(
+              db,
+              'UPDATE memories SET strength = 0.7 * retrieval_strength + 0.3 * (storage_strength / 10.0) WHERE id = ?',
+              new_id,
+            )
+          {
+            case Ok(_) -> {}
+            case Error(_) -> {}
+          }
 
           count = count + 1
         }
         case Error(e) -> {
           failed = failed + 1
-          if first_error == "" {
-            first_error = e
-          }
+
+          if first_error == '' { first_error = e }
         }
       }
     }
   }
 
-  Result.Ok(ImportResult(imported: count, failed: failed, first_error: first_error))
+  Result.Ok(
+    ImportResult(imported: count, failed: failed, first_error: first_error),
+  )
 }
 
 fn get_timestamp(db: mut Database) -> String {
   let sql = "SELECT datetime('now')"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
-    case Error(_) -> return ""
+    case Error(_) -> return ''
   }
 
-  let result = if stmt.step == SQLITE_ROW {
-    stmt.column_text(0)
-  } else {
-    ""
-  }
+  let result = if stmt.step == SQLITE_ROW { stmt.column_text(0) } else { '' }
+
   stmt.finalize
   result
 }
@@ -1924,6 +2274,7 @@ fn get_timestamp(db: mut Database) -> String {
 fn sha256_hash(content: String) -> String {
   let bytes = content.to_byte_array
   let mut hash = Sha256.new
+
   hash.write(bytes)
   hash.finish.to_string
 }
@@ -1943,6 +2294,7 @@ fn simhash(content: String) -> String {
   # Collect all shingle hashes first
   let mut hashes: Array[Int] = []
   let mut i = 0
+
   while i + 2 < size {
     let b0 = match bytes.get(i) {
       case Ok(b) -> b
@@ -1959,6 +2311,7 @@ fn simhash(content: String) -> String {
 
     # Hash this shingle using FNV-1a (32-bit, wrapping)
     let mut h = 2166136261
+
     h = (h ^ b0).wrapping_mul(16777619)
     h = (h ^ b1).wrapping_mul(16777619)
     h = (h ^ b2).wrapping_mul(16777619)
@@ -1970,18 +2323,16 @@ fn simhash(content: String) -> String {
   # For each bit position, count votes across all shingle hashes
   let mut result = 0
   let mut bit = 0
+
   while bit < 32 {
     let mut count = 0
+
     for h in hashes.iter {
-      if (h >> bit) & 1 == 1 {
-        count = count + 1
-      } else {
-        count = count - 1
-      }
+      if (h >> bit) & 1 == 1 { count = count + 1 } else { count = count - 1 }
     }
-    if count > 0 {
-      result = result | (1 << bit)
-    }
+
+    if count > 0 { result = result | (1 << bit) }
+
     bit = bit + 1
   }
 
@@ -1990,7 +2341,7 @@ fn simhash(content: String) -> String {
 
 # Simple integer to hex conversion
 fn int_to_hex(val: Int) -> String {
-  let hex_chars = "0123456789abcdef".to_byte_array
+  let hex_chars = '0123456789abcdef'.to_byte_array
   let mut result = StringBuffer.new
 
   # Handle 8 hex digits (32 bits)
@@ -1999,14 +2350,17 @@ fn int_to_hex(val: Int) -> String {
 
   while shift >= 0 {
     let nibble = (v >> shift) & 15
+
     match hex_chars.get(nibble) {
       case Ok(byte) -> {
         let mut single = ByteArray.new
+
         single.push(byte)
         result.push(single.into_string)
       }
-      case Error(_) -> result.push("0")
+      case Error(_) -> result.push('0')
     }
+
     shift = shift - 4
   }
 
@@ -2019,14 +2373,18 @@ fn simhash_substr(hex: String, start: Int, len: Int) -> String {
   let mut result = ByteArray.new
   let end = start + len
   let mut i = start
+
   while i < end {
     if i >= bytes.size { break }
+
     match bytes.get(i) {
       case Ok(b) -> result.push(b)
       case Error(_) -> {}
     }
+
     i = i + 1
   }
+
   result.into_string
 }
 
@@ -2045,21 +2403,23 @@ fn hex_to_int(hex: String) -> Int {
     } else {
       0
     }
+
     result = (result << 4) + nibble
   }
 
   result
 }
 
-# Calculate Hamming distance between two hash values
+# Calculate Hamming distance between two 32-bit hash values
 fn hamming_distance(a: Int, b: Int) -> Int {
   let val = (a & 0xFFFFFFFF) ^ (b & 0xFFFFFFFF)
   let mut count = 0
-  let mut v = val
+  let mut bit = 0
 
-  while v > 0 {
-    count = count + (v & 1)
-    v = v >> 1
+  # Fixed 32 iterations to avoid losing bit 31 on right shift
+  while bit < 32 {
+    count = count + ((val >> bit) & 1)
+    bit = bit + 1
   }
 
   count
@@ -2069,36 +2429,38 @@ fn hamming_distance(a: Int, b: Int) -> Int {
 # Returns tuple of (is_contradiction, contradicts_id)
 # Uses FTS5 to find candidate memories sharing key terms, then checks
 # only those candidates for negation-based contradictions.
-fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int]) {
+fn check_contradiction(
+  db: mut Database,
+  content: String,
+) -> (Bool, Option[Int]) {
   let content_lower = to_lowercase(content)
   let content_bytes = content_lower.to_byte_array
 
   # Extract key entities (words > 3 chars, not common words)
   let entities = extract_entities(ref content_bytes)
-  if entities.size == 0 {
-    return (false, Option.None)
-  }
+
+  if entities.size == 0 { return (false, Option.None) }
 
   # Check if new content has negation
   let has_negation = has_negation_words(ref content_bytes)
 
   # Build FTS5 query from entities: "\"term1\" OR \"term2\" OR \"term3\""
   # Each entity is quoted to prevent FTS5 syntax injection
-  let mut fts_query = ""
+  let mut fts_query = ''
   let mut first = true
+
   for entity in entities.iter {
     let safe_entity = sanitize_fts5_query(entity)
+
     if first {
       fts_query = safe_entity
       first = false
     } else {
-      fts_query = fts_query + " OR " + safe_entity
+      fts_query = fts_query + ' OR ' + safe_entity
     }
   }
 
-  if fts_query == "" {
-    return (false, Option.None)
-  }
+  if fts_query == '' { return (false, Option.None) }
 
   # Use FTS5 to find candidate memories sharing terms
   let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = 'active'"
@@ -2112,17 +2474,15 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
       stmt.finalize
       return (false, Option.None)
     }
-    case Ok(_) -> { }
+    case Ok(_) -> {}
   }
 
   loop {
     let step_result = stmt.step
-    if step_result == SQLITE_DONE {
-      break
-    }
-    if step_result != SQLITE_ROW {
-      break
-    }
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW { break }
 
     let mem_id = stmt.column_int(0)
     let mem_content = stmt.column_text(1)
@@ -2144,6 +2504,7 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
       }
     }
   }
+
   stmt.finalize
 
   (false, Option.None)
@@ -2155,6 +2516,7 @@ fn check_contradiction(db: mut Database, content: String) -> (Bool, Option[Int])
 fn sanitize_fts5_query(query: String) -> String {
   let bytes = query.to_byte_array
   let mut result = ByteArray.new
+
   result.push(34) # opening "
 
   for byte in bytes.iter {
@@ -2171,47 +2533,6 @@ fn sanitize_fts5_query(query: String) -> String {
   result.into_string
 }
 
-# Check if a string contains a substring
-fn contains_substring(haystack: String, needle: String) -> Bool {
-  let h_bytes = haystack.to_byte_array
-  let n_bytes = needle.to_byte_array
-  let h_len = h_bytes.size
-  let n_len = n_bytes.size
-
-  if n_len == 0 { return true }
-  if n_len > h_len { return false }
-
-  let mut i = 0
-  while i + n_len <= h_len {
-    let mut matched = true
-    let mut j = 0
-    while j < n_len {
-      let h_byte = match h_bytes.get(i + j) {
-        case Ok(b) -> b
-        case Error(_) -> {
-          matched = false
-          break
-        }
-      }
-      let n_byte = match n_bytes.get(j) {
-        case Ok(b) -> b
-        case Error(_) -> {
-          matched = false
-          break
-        }
-      }
-      if h_byte != n_byte {
-        matched = false
-        break
-      }
-      j = j + 1
-    }
-    if matched { return true }
-    i = i + 1
-  }
-  false
-}
-
 fn to_lowercase(s: String) -> String {
   let bytes = s.to_byte_array
   let mut result = ByteArray.new
@@ -2224,6 +2545,7 @@ fn to_lowercase(s: String) -> String {
       result.push(byte)
     }
   }
+
   result.into_string
 }
 
@@ -2233,7 +2555,9 @@ fn extract_entities(bytes: ref ByteArray) -> Array[String] {
   let mut in_word = false
 
   for byte in bytes.iter {
-    let is_alphanum = (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122)
+    let is_alphanum = (byte >= 48 and byte <= 57)
+      or (byte >= 65 and byte <= 90)
+      or (byte >= 97 and byte <= 122)
 
     if is_alphanum {
       word_bytes.push(byte)
@@ -2245,6 +2569,7 @@ fn extract_entities(bytes: ref ByteArray) -> Array[String] {
 
         # Check if not a common word
         let mut is_common = false
+
         for common in COMMON_WORDS.iter {
           if word_str == common {
             is_common = true
@@ -2252,10 +2577,9 @@ fn extract_entities(bytes: ref ByteArray) -> Array[String] {
           }
         }
 
-        if !is_common {
-          entities.push(word_str)
-        }
+        if !is_common { entities.push(word_str) }
       }
+
       word_bytes = ByteArray.new
       in_word = false
     }
@@ -2266,15 +2590,12 @@ fn extract_entities(bytes: ref ByteArray) -> Array[String] {
     let word_str = word_bytes.clone.into_string
 
     let mut is_common = false
+
     for common in COMMON_WORDS.iter {
-      if word_str == common {
-        is_common = true
-      }
+      if word_str == common { is_common = true }
     }
 
-    if !is_common {
-      entities.push(word_str)
-    }
+    if !is_common { entities.push(word_str) }
   }
 
   entities
@@ -2285,7 +2606,9 @@ fn has_negation_words(bytes: ref ByteArray) -> Bool {
   let mut in_word = false
 
   for byte in bytes.iter {
-    let is_alphanum = (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122)
+    let is_alphanum = (byte >= 48 and byte <= 57)
+      or (byte >= 65 and byte <= 90)
+      or (byte >= 97 and byte <= 122)
 
     if is_alphanum {
       word_bytes.push(byte)
@@ -2296,9 +2619,7 @@ fn has_negation_words(bytes: ref ByteArray) -> Bool {
 
       # Check against negation words
       for neg in NEGATION_WORDS.iter {
-        if word_str == neg {
-          return true
-        }
+        if word_str == neg { return true }
       }
 
       word_bytes = ByteArray.new
@@ -2311,24 +2632,43 @@ fn has_negation_words(bytes: ref ByteArray) -> Bool {
     let word_str = word_bytes.clone.into_string
 
     for neg in NEGATION_WORDS.iter {
-      if word_str == neg {
-        return true
-      }
+      if word_str == neg { return true }
     }
   }
 
   false
 }
 
-fn count_entity_overlap(entities1: ref Array[String], entities2: ref Array[String]) -> Int {
+fn count_entity_overlap(
+  entities1: ref Array[String],
+  entities2: ref Array[String],
+) -> Int {
   let mut count = 0
+  let mut matched: Array[String] = []
+
   for e1 in entities1.iter {
     for e2 in entities2.iter {
       if e1 == e2 {
-        count = count + 1
+        # Only count each entity2 entry once
+        let mut already = false
+
+        for m in matched.iter {
+          if m == e2 {
+            already = true
+            break
+          }
+        }
+
+        if !already {
+          count = count + 1
+          matched.push(e2)
+        }
+
+        break
       }
     }
   }
+
   count
 }
 
@@ -2364,7 +2704,7 @@ impl Memory {
     similarity: Float64,
     parent_id: Option[Int],
     contradicts_id: Option[Int],
-    is_contradiction: Bool
+    is_contradiction: Bool,
   ) -> Memory {
     Memory(
       id: stmt.column_int(0),
@@ -2388,7 +2728,7 @@ impl Memory {
       contradicts_id: contradicts_id,
       storage_strength: stmt.column_double(16),
       retrieval_strength: stmt.column_double(17),
-      is_contradiction: is_contradiction
+      is_contradiction: is_contradiction,
     )
   }
 
@@ -2403,12 +2743,18 @@ impl Memory {
   fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
     let parent = stmt.column_int(18)
     let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
+
     build(stmt, 0.0 as Float64, pid, Option.None, false)
   }
 
   fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
     let contradicts = stmt.column_int(18)
-    let cid = if contradicts > 0 { Option.Some(contradicts) } else { Option.None }
+    let cid = if contradicts > 0 {
+      Option.Some(contradicts)
+    } else {
+      Option.None
+    }
+
     build(stmt, 0.0 as Float64, Option.None, cid, true)
   }
 }
@@ -2417,24 +2763,30 @@ fn output_memories(memories: Array[Memory], out: Stdout) {
   let mut results: Array[Json] = []
 
   for memory in memories.iter {
-    let score = if (memory.similarity as Float) > 0.0 { memory.similarity } else { memory.strength }
+    let score = if (memory.similarity as Float) > 0.0 {
+      memory.similarity
+    } else {
+      memory.strength
+    }
     let mut obj: Map[String, Json] = Map.new
-    obj.set("id", Json.Int(memory.id))
-    obj.set("summary", Json.String(memory.content))
-    obj.set("score", Json.Float(score as Float))
-    obj.set("tags", Json.String(memory.tags))
-    obj.set("status", Json.String(memory.status))
-    obj.set("negative_flag", Json.Bool(memory.xflag))
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('summary', Json.String(memory.content))
+    obj.set('score', Json.Float(score as Float))
+    obj.set('tags', Json.String(memory.tags))
+    obj.set('status', Json.String(memory.status))
+    obj.set('negative_flag', Json.Bool(memory.xflag))
     results.push(Json.Object(obj))
   }
 
   let mut root: Map[String, Json] = Map.new
-  root.set("results", Json.Array(results))
+
+  root.set('results', Json.Array(results))
   out.print(Json.Object(root).to_string)
 }
 
-fn escape_json(s: String) -> String{
-  let hex_chars = "0123456789abcdef".to_byte_array
+fn escape_json(s: String) -> String {
+  let hex_chars = '0123456789abcdef'.to_byte_array
   let bytes = s.to_byte_array
   let mut result = ByteArray.new
 
@@ -2469,16 +2821,19 @@ fn escape_json(s: String) -> String{
       result.push(102)
     } else if byte < 32 {
       # Other control characters: \u00XX
-      result.push(92)   # \
-      result.push(117)   # u
-      result.push(48)    # 0
-      result.push(48)    # 0
+      result.push(92) # \
+      result.push(117) # u
+      result.push(48) # 0
+      result.push(48) # 0
+
       let hi = (byte >> 4) & 15
       let lo = byte & 15
+
       match hex_chars.get(hi) {
         case Ok(h) -> result.push(h)
         case Error(_) -> result.push(48)
       }
+
       match hex_chars.get(lo) {
         case Ok(l) -> result.push(l)
         case Error(_) -> result.push(48)
@@ -2496,19 +2851,23 @@ fn output_history(memories: Array[Memory], out: Stdout) {
 
   for memory in memories.iter {
     let mut obj: Map[String, Json] = Map.new
-    obj.set("id", Json.Int(memory.id))
-    obj.set("content", Json.String(memory.content))
-    obj.set("status", Json.String(memory.status))
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('content', Json.String(memory.content))
+    obj.set('status', Json.String(memory.status))
+
     match memory.parent_id {
-      case Some(pid) -> obj.set("parent_id", Json.Int(pid))
-      case None -> obj.set("parent_id", Json.Null)
+      case Some(pid) -> obj.set('parent_id', Json.Int(pid))
+      case None -> obj.set('parent_id', Json.Null)
     }
-    obj.set("created_at", Json.String(memory.created_at))
+
+    obj.set('created_at', Json.String(memory.created_at))
     versions.push(Json.Object(obj))
   }
 
   let mut root: Map[String, Json] = Map.new
-  root.set("versions", Json.Array(versions))
+
+  root.set('versions', Json.Array(versions))
   out.print(Json.Object(root).to_string)
 }
 
@@ -2517,17 +2876,21 @@ fn output_contradictions(memories: Array[Memory], out: Stdout) {
 
   for memory in memories.iter {
     let mut obj: Map[String, Json] = Map.new
-    obj.set("id", Json.Int(memory.id))
-    obj.set("content", Json.String(memory.content))
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('content', Json.String(memory.content))
+
     match memory.contradicts_id {
-      case Some(cid) -> obj.set("contradicts_id", Json.Int(cid))
-      case None -> obj.set("contradicts_id", Json.Null)
+      case Some(cid) -> obj.set('contradicts_id', Json.Int(cid))
+      case None -> obj.set('contradicts_id', Json.Null)
     }
-    obj.set("created_at", Json.String(memory.created_at))
+
+    obj.set('created_at', Json.String(memory.created_at))
     items.push(Json.Object(obj))
   }
 
   let mut root: Map[String, Json] = Map.new
-  root.set("contradictions", Json.Array(items))
+
+  root.set('contradictions', Json.Array(items))
   out.print(Json.Object(root).to_string)
 }
