@@ -369,19 +369,47 @@ fn parse_hook(args: Array[String]) -> Option[Command] {
 fn int_parse(s: String) -> Option[Int] {
   let mut result = 0
   let mut valid = false
+  let mut negative = false
   let bytes = s.to_byte_array
+  let mut i = 0
 
-  for byte in bytes.iter {
-    if byte >= 48 and byte <= 57 {
-      valid = true
-      result = result * 10 + (byte - 48)
-    } else {
-      return Option.None
+  # Check for leading minus sign
+  if bytes.size > 0 {
+    match bytes.get(0) {
+      case Ok(b) if b == 45 -> {
+        negative = true
+        i = 1
+      }
+      case _ -> {}
     }
   }
 
+  while i < bytes.size {
+    match bytes.get(i) {
+      case Ok(byte) -> {
+        if byte >= 48 and byte <= 57 {
+          let digit = byte - 48
+          # Check for overflow: result * 10 + digit must not exceed Int max
+          if result > 922337203685477580 or (result == 922337203685477580 and digit > 7) {
+            return Option.None
+          }
+          valid = true
+          result = result * 10 + digit
+        } else {
+          return Option.None
+        }
+      }
+      case Error(_) -> return Option.None
+    }
+    i = i + 1
+  }
+
   if valid {
-    Option.Some(result)
+    if negative {
+      Option.Some(0 - result)
+    } else {
+      Option.Some(result)
+    }
   } else {
     Option.None
   }
