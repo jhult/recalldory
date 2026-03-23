@@ -31,6 +31,7 @@ type async Main {
         let global = parsed.global
         let cmd = parsed.into_command
         match cmd {
+          case Help -> print_help(out)
           case HookPostCompact -> {
             handle_hook_post_compact(out)
           }
@@ -52,13 +53,40 @@ type async Main {
           case Update(a, b, c, d) -> run_with_db(Command.Update(a, b, c, d), global, out)
           case History(a) -> run_with_db(Command.History(a), global, out)
           case Contradictions(a) -> run_with_db(Command.Contradictions(a), global, out)
+          case RebuildFts -> run_with_db(Command.RebuildFts, global, out)
         }
       }
       case None -> {
-        out.print("{\"error\": \"No command provided\"}")
+        print_help(out)
       }
     }
   }
+}
+
+fn print_help(out: Stdout) {
+  out.print("recalldory - persistent memory for AI coding assistants\n")
+  out.print("Usage: recalldory <command> [options] [--global]\n")
+  out.print("\nCommands:")
+  out.print("  add <content> [--tags T] [--scope S] [--pin]   Add a memory")
+  out.print("  recall <query> [--scope S] [--top N]            Search memories")
+  out.print("  list [--scope S] [--status S] [--limit N]       List memories")
+  out.print("  update <id> [content] [--content C] [--tags T]  Update a memory")
+  out.print("  forget <id>                                     Delete a memory")
+  out.print("  pin <id>                                        Pin a memory")
+  out.print("  unpin <id>                                      Unpin a memory")
+  out.print("  feedback <id> <helpful|harmful>                 Give feedback")
+  out.print("  maintain [--dry-run]                            Run maintenance")
+  out.print("  stats                                           Show statistics")
+  out.print("  export                                          Export as JSON")
+  out.print("  import <file>                                   Import from JSON")
+  out.print("  history <id>                                    Show version history")
+  out.print("  contradictions [--resolve <id>]                 Manage contradictions")
+  out.print("  agents-md [--path P]                            Generate AGENTS.md")
+  out.print("  rebuild-fts                                     Rebuild FTS index")
+  out.print("  hook install                                    Install Claude hook")
+  out.print("  hook post-compact                               Post-compact hook")
+  out.print("\nGlobal flag:")
+  out.print("  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database")
 }
 
 fn run_with_db(cmd: Command, global: Bool, out: Stdout) {
@@ -529,6 +557,19 @@ fn handle_command(cmd: Command, db: mut Database, out: Stdout) {
           }
         }
       }
+    }
+    case RebuildFts -> {
+      match rebuild_fts(db) {
+        case Ok(count) -> {
+          out.print("{\"success\": true, \"indexed\": ${count}}")
+        }
+        case Error(e) -> {
+          out.print("{\"error\": \"${escape_json(e)}\"}")
+        }
+      }
+    }
+    case Help -> {
+      # Unreachable: handled before DB open
     }
   }
 }
@@ -1651,6 +1692,74 @@ fn get_stats(db: mut Database) -> Result[MemoryStats, String] {
   stmt.finalize
 
   Result.Ok(result)
+}
+
+fn rebuild_fts(db: mut Database) -> Result[Int, String] {
+  # Drop and recreate FTS table
+  let _ = db.exec("DROP TABLE IF EXISTS memories_fts")
+  match db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary)") {
+    case Error(e) -> return Result.Error("Failed to create FTS table: ${e}")
+    case Ok(_) -> {}
+  }
+
+  # Re-populate from memories table
+  let sql = "SELECT id, content, tags, summary FROM memories"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error("Failed to prepare: ${e}")
+  }
+
+  let fts_sql = "INSERT INTO memories_fts (rowid, content, tags, summary) VALUES (?, ?, ?, ?)"
+  let mut fts_stmt = match db.prepare(fts_sql) {
+    case Ok(s) -> s
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error("Failed to prepare FTS insert: ${e}")
+    }
+  }
+
+  let mut count = 0
+  loop {
+    let step_result = stmt.step
+    if step_result == SQLITE_DONE { break }
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      fts_stmt.finalize
+      return Result.Error("Query failed during rebuild")
+    }
+
+    let id = stmt.column_int(0)
+    let content = stmt.column_text(1)
+    let tags = stmt.column_text(2)
+    let summary = stmt.column_text(3)
+
+    match fts_stmt.bind_int(1, id) {
+      case Error(_) -> {}
+      case Ok(_) -> {}
+    }
+    match fts_stmt.bind_text(2, content) {
+      case Error(_) -> {}
+      case Ok(_) -> {}
+    }
+    match fts_stmt.bind_text(3, tags) {
+      case Error(_) -> {}
+      case Ok(_) -> {}
+    }
+    match fts_stmt.bind_text(4, summary) {
+      case Error(_) -> {}
+      case Ok(_) -> {}
+    }
+
+    if fts_stmt.step == SQLITE_DONE {
+      count = count + 1
+    }
+    let _ = fts_stmt.reset
+  }
+
+  stmt.finalize
+  fts_stmt.finalize
+
+  Result.Ok(count)
 }
 
 fn generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
