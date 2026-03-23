@@ -1,0 +1,109 @@
+import std.test (Tests)
+import cli (int_parse)
+
+fn pub tests(t: mut Tests) {
+  t.test("int_parse parses single digit", fn (t) {
+    match int_parse("5") {
+      case Some(v) -> t.equal(v, 5)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse parses multi-digit", fn (t) {
+    match int_parse("12345") {
+      case Some(v) -> t.equal(v, 12345)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse parses zero", fn (t) {
+    match int_parse("0") {
+      case Some(v) -> t.equal(v, 0)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse parses negative number", fn (t) {
+    match int_parse("-42") {
+      case Some(v) -> t.equal(v, -42)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse parses negative zero", fn (t) {
+    match int_parse("-0") {
+      case Some(v) -> t.equal(v, 0)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse returns None for empty string", fn (t) {
+    match int_parse("") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for letters", fn (t) {
+    match int_parse("abc") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for mixed alphanum", fn (t) {
+    match int_parse("12abc") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for lone minus", fn (t) {
+    match int_parse("-") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for leading plus", fn (t) {
+    match int_parse("+5") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for whitespace", fn (t) {
+    match int_parse(" ") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for decimal", fn (t) {
+    match int_parse("3.14") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse parses large number", fn (t) {
+    match int_parse("999999999") {
+      case Some(v) -> t.equal(v, 999999999)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test("int_parse returns None for overflow", fn (t) {
+    match int_parse("99999999999999999999") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test("int_parse returns None for negative overflow", fn (t) {
+    match int_parse("-99999999999999999999") {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+}

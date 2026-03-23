@@ -1,0 +1,368 @@
+import recalldory (
+  count_entity_overlap, escape_json, extract_entities, hamming_distance,
+  has_negation_words, hex_to_int, int_to_hex, sanitize_fts5_query, sha256_hash,
+  simhash, simhash_substr, to_lowercase,
+)
+import std.test (Tests)
+
+fn pub tests(t: mut Tests) {
+  # --- sha256_hash ---
+
+  t.test('sha256_hash produces consistent 64-char hex', fn (t) {
+    let h1 = sha256_hash('hello')
+    let h2 = sha256_hash('hello')
+
+    t.equal(h1, h2)
+    t.equal(h1.size, 64)
+  })
+
+  t.test('sha256_hash differs for different inputs', fn (t) {
+    let h1 = sha256_hash('foo')
+    let h2 = sha256_hash('bar')
+
+    t.false(h1 == h2)
+  })
+
+  t.test('sha256_hash handles empty string', fn (t) {
+    let h = sha256_hash('')
+
+    t.equal(h.size, 64)
+  })
+
+  # --- int_to_hex ---
+
+  t.test('int_to_hex converts zero', fn (t) {
+    t.equal(int_to_hex(0), '00000000')
+  })
+
+  t.test('int_to_hex converts small value', fn (t) {
+    t.equal(int_to_hex(255), '000000ff')
+  })
+
+  t.test('int_to_hex converts 32-bit max', fn (t) {
+    t.equal(int_to_hex(4294967295), 'ffffffff')
+  })
+
+  t.test('int_to_hex converts 0x80000000 (high bit set)', fn (t) {
+    t.equal(int_to_hex(2147483648), '80000000')
+  })
+
+  # --- hex_to_int ---
+
+  t.test('hex_to_int parses zero', fn (t) { t.equal(hex_to_int('0'), 0) })
+
+  t.test('hex_to_int parses lowercase', fn (t) {
+    t.equal(hex_to_int('ff'), 255)
+  })
+
+  t.test('hex_to_int parses uppercase', fn (t) {
+    t.equal(hex_to_int('FF'), 255)
+  })
+
+  t.test('hex_to_int parses full 32-bit', fn (t) {
+    t.equal(hex_to_int('ffffffff'), 4294967295)
+  })
+
+  # --- simhash_substr ---
+
+  t.test('simhash_substr extracts middle chars', fn (t) {
+    t.equal(simhash_substr('01234567', 2, 4), '2345')
+  })
+
+  t.test('simhash_substr extracts prefix', fn (t) {
+    t.equal(simhash_substr('abcdef01', 0, 2), 'ab')
+  })
+
+  t.test('simhash_substr extracts suffix', fn (t) {
+    t.equal(simhash_substr('abcdef01', 6, 2), '01')
+  })
+
+  t.test('simhash_substr clamps to string length', fn (t) {
+    t.equal(simhash_substr('abcd', 2, 8), 'cd')
+  })
+
+  # --- hamming_distance ---
+
+  t.test('hamming_distance zero for identical', fn (t) {
+    t.equal(hamming_distance(0, 0), 0)
+  })
+
+  t.test('hamming_distance counts differing bits', fn (t) {
+    t.equal(hamming_distance(0, 255), 8)
+  })
+
+  t.test('hamming_distance works for arbitrary values', fn (t) {
+    t.equal(hamming_distance(170, 85), 8)
+  })
+
+  t.test('hamming_distance for high-bit value vs zero', fn (t) {
+    # 0x80000000 has exactly 1 bit set; distance to 0 should be 1.
+    # Current buggy code returns 2 (adds spurious bit 32 from overflow).
+    t.equal(hamming_distance(2147483648, 0), 1)
+  })
+
+  t.test('hamming_distance for 0xFFFFFFFF vs zero', fn (t) {
+    # 0xFFFFFFFF has 32 bits set; distance to 0 should be 32.
+    # Current buggy code returns 33.
+    t.equal(hamming_distance(4294967295, 0), 32)
+  })
+
+  t.test('hamming_distance for 0x80000000 vs 0x7FFFFFFF', fn (t) {
+    # All 32 bits differ: should be 32.
+    # Current buggy code returns 33.
+    t.equal(hamming_distance(2147483648, 2147483647), 32)
+  })
+
+  t.test('hamming_distance for high-bit values with positive XOR', fn (t) {
+    # 0x80000000 vs 0xC0000000: XOR = 0x40000000 (positive), 1 bit differs.
+    # This case works correctly since XOR doesn't have bit 31 set.
+    t.equal(hamming_distance(2147483648, 3221225472), 1)
+  })
+
+  # --- simhash ---
+
+  t.test('simhash returns 8-char hex for normal input', fn (t) {
+    let h = simhash('hello world')
+
+    t.equal(h.size, 8)
+  })
+
+  t.test('simhash is deterministic', fn (t) {
+    let h1 = simhash('test content here')
+    let h2 = simhash('test content here')
+
+    t.equal(h1, h2)
+  })
+
+  t.test('simhash differs for different inputs', fn (t) {
+    let h1 = simhash('foo bar baz')
+    let h2 = simhash('qux quux corge')
+
+    t.equal(h1 != h2, true)
+  })
+
+  t.test('simhash returns non-zero for empty string', fn (t) {
+    let h = simhash('')
+
+    t.equal(h.size, 8)
+    t.false(h == '00000000')
+  })
+
+  t.test('simhash returns non-zero for single char', fn (t) {
+    let h = simhash('a')
+
+    t.equal(h.size, 8)
+    t.false(h == '00000000')
+  })
+
+  t.test('simhash returns non-zero for two chars', fn (t) {
+    let h = simhash('ab')
+
+    t.equal(h.size, 8)
+    t.false(h == '00000000')
+  })
+
+  t.test('simhash is unique for different short content', fn (t) {
+    let h1 = simhash('')
+    let h2 = simhash('a')
+    let h3 = simhash('ab')
+
+    t.false(h1 == h2)
+    t.false(h2 == h3)
+    t.false(h1 == h3)
+  })
+
+  t.test('simhash produces similar hashes for near-duplicates', fn (t) {
+    let h1 = simhash('the quick brown fox jumps over the lazy dog')
+    let h2 = simhash('the quick brown fox jumps over the lazy cat')
+    let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
+    # Near-duplicates should have small Hamming distance (well under 16)
+    t.true(d < 10)
+  })
+
+  t.test('simhash produces different hashes for unrelated text', fn (t) {
+    let h1 = simhash('programming languages and compilers')
+    let h2 = simhash('chocolate cake recipe with vanilla frosting')
+    let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
+    # Unrelated text should have larger Hamming distance
+    t.true(d > 8)
+  })
+
+  # --- sanitize_fts5_query ---
+
+  t.test('sanitize_fts5_query wraps in quotes', fn (t) {
+    t.equal(sanitize_fts5_query('hello'), '"hello"')
+  })
+
+  t.test('sanitize_fts5_query escapes double quotes', fn (t) {
+    t.equal(sanitize_fts5_query('say "hello"'), '"say ""hello"""')
+  })
+
+  t.test('sanitize_fts5_query handles empty string', fn (t) {
+    t.equal(sanitize_fts5_query(''), '""')
+  })
+
+  t.test('sanitize_fts5_query preserves special FTS chars', fn (t) {
+    # Characters like AND, OR, NOT should be preserved inside quotes
+    t.equal(sanitize_fts5_query('test OR query'), '"test OR query"')
+  })
+
+  # --- String.contains? ---
+
+  t.test('String.contains? finds match', fn (t) {
+    t.true('hello world'.contains?('world'))
+  })
+
+  t.test('String.contains? returns false for no match', fn (t) {
+    t.false('hello world'.contains?('xyz'))
+  })
+
+  t.test('String.contains? finds prefix match', fn (t) {
+    t.true('abcdef'.contains?('abc'))
+  })
+
+  t.test('String.contains? finds suffix match', fn (t) {
+    t.true('abcdef'.contains?('def'))
+  })
+
+  # --- to_lowercase ---
+
+  t.test('to_lowercase lowercases ASCII', fn (t) {
+    t.equal(to_lowercase('Hello WORLD'), 'hello world')
+  })
+
+  t.test('to_lowercase handles already lowercase', fn (t) {
+    t.equal(to_lowercase('abc'), 'abc')
+  })
+
+  t.test('to_lowercase handles empty string', fn (t) {
+    t.equal(to_lowercase(''), '')
+  })
+
+  t.test('to_lowercase preserves non-alpha', fn (t) {
+    t.equal(to_lowercase('Hello, World! 123'), 'hello, world! 123')
+  })
+
+  # --- escape_json ---
+
+  t.test('escape_json passes through plain text', fn (t) {
+    t.equal(escape_json('hello world'), 'hello world')
+  })
+
+  t.test('escape_json escapes double quotes', fn (t) {
+    t.equal(escape_json('say "hi"'), 'say \\"hi\\"')
+  })
+
+  t.test('escape_json escapes backslash', fn (t) {
+    t.equal(escape_json('path\\to\\file'), 'path\\\\to\\\\file')
+  })
+
+  t.test('escape_json escapes newline', fn (t) {
+    t.equal(escape_json('line1\nline2'), 'line1\\nline2')
+  })
+
+  t.test('escape_json escapes carriage return', fn (t) {
+    t.equal(escape_json('a\rb'), 'a\\rb')
+  })
+
+  t.test('escape_json escapes tab', fn (t) {
+    t.equal(escape_json('a\tb'), 'a\\tb')
+  })
+
+  t.test('escape_json handles empty string', fn (t) {
+    t.equal(escape_json(''), '')
+  })
+
+  # --- extract_entities ---
+
+  t.test('extract_entities returns words longer than 3 chars', fn (t) {
+    let bytes = 'hello world from test'.to_byte_array
+    let entities = extract_entities(ref bytes)
+    # "hello" (5), "world" (5), "test" (4) included; "from" (4) excluded (common word)
+    t.equal(entities.size, 3)
+  })
+
+  t.test('extract_entities excludes common words', fn (t) {
+    let bytes = 'this is very interesting'.to_byte_array
+    let entities = extract_entities(ref bytes)
+    # "this" (4) excluded (common), "is" (2) excluded (too short),
+    # "very" (4) included, "interesting" (11) included
+    t.equal(entities.size, 2)
+  })
+
+  t.test('extract_entities excludes short words', fn (t) {
+    let bytes = 'a an the of'.to_byte_array
+    let entities = extract_entities(ref bytes)
+
+    t.equal(entities.size, 0)
+  })
+
+  t.test('extract_entities handles empty input', fn (t) {
+    let bytes = ''.to_byte_array
+    let entities = extract_entities(ref bytes)
+
+    t.equal(entities.size, 0)
+  })
+
+  # --- has_negation_words ---
+
+  t.test("has_negation_words detects 'not'", fn (t) {
+    let bytes = 'this is not correct'.to_byte_array
+
+    t.true(has_negation_words(ref bytes))
+  })
+
+  t.test("has_negation_words detects 'never'", fn (t) {
+    let bytes = 'never use global variables'.to_byte_array
+
+    t.true(has_negation_words(ref bytes))
+  })
+
+  t.test("has_negation_words detects 'avoid'", fn (t) {
+    let bytes = 'avoid premature optimization'.to_byte_array
+
+    t.true(has_negation_words(ref bytes))
+  })
+
+  t.test('has_negation_words returns false for positive text', fn (t) {
+    let bytes = 'always use strong types'.to_byte_array
+
+    t.false(has_negation_words(ref bytes))
+  })
+
+  t.test('has_negation_words returns false for empty input', fn (t) {
+    let bytes = ''.to_byte_array
+
+    t.false(has_negation_words(ref bytes))
+  })
+
+  # --- count_entity_overlap ---
+
+  t.test('count_entity_overlap counts shared entities', fn (t) {
+    let a = ['rust', 'python', 'typescript']
+    let b = ['javascript', 'rust', 'go']
+
+    t.equal(count_entity_overlap(ref a, ref b), 1)
+  })
+
+  t.test('count_entity_overlap returns zero for no overlap', fn (t) {
+    let a = ['foo', 'bar']
+    let b = ['baz', 'qux']
+
+    t.equal(count_entity_overlap(ref a, ref b), 0)
+  })
+
+  t.test('count_entity_overlap handles empty arrays', fn (t) {
+    let a: Array[String] = []
+    let b = ['foo']
+
+    t.equal(count_entity_overlap(ref a, ref b), 0)
+  })
+
+  t.test('count_entity_overlap counts duplicates', fn (t) {
+    let a = ['foo', 'foo', 'bar']
+    let b = ['foo', 'baz']
+    # foo appears 2x in a but only 1x in b, so 1 overlap
+    t.equal(count_entity_overlap(ref a, ref b), 1)
+  })
+}

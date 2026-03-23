@@ -803,7 +803,7 @@ fn add_memory_inner(db: mut Database, content: String, tags: String, scope: Stri
   # (e.g., use `contradictions --resolve` to clear the flag).
   # FTS5 is auto-synced via triggers — no manual indexing needed.
 
-  Result.Ok(AddResult(id: memory_id, deduplicated: false, contradiction: is_contradiction, contradicts_id: raw_contradicts_id))
+  Result.Ok(AddResult(id: memory_id, deduplicated: false, contradiction: is_contradiction, contradicts_id: if has_contradicts { Option.Some(contradicts_id_val) } else { Option.None }))
 }
 
 fn list_memories(db: mut Database, scope_filter: String, status_filter: String, limit: Int) -> Result[Array[Memory], String] {
