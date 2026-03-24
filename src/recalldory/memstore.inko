@@ -191,9 +191,10 @@ fn pub add_memory(
 
   match add_memory_inner(db, content, tags, scope, pin) {
     case Ok(v) -> {
-      let _ = exec_sql(db, 'COMMIT')
-
-      Result.Ok(v)
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> Result.Ok(v)
+        case Error(e) -> Result.Error('Failed to commit: ${e}')
+      }
     }
     case Error(e) -> {
       let _ = exec_sql(db, 'ROLLBACK')
@@ -667,8 +668,10 @@ fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
     exec_with_int(db, 'DELETE FROM memories WHERE id = ?', id)
   {
     case Ok(changes) -> {
-      let _ = exec_sql(db, 'COMMIT')
-      Result.Ok(changes > 0)
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> Result.Ok(changes > 0)
+        case Error(e) -> Result.Error('Failed to commit: ${e}')
+      }
     }
     case Error(e) -> {
       let _ = exec_sql(db, 'ROLLBACK')
@@ -741,9 +744,10 @@ fn pub update_memory(
 
   match update_memory_inner(db, id, content, tags, scope) {
     case Ok(v) -> {
-      let _ = exec_sql(db, 'COMMIT')
-
-      Result.Ok(v)
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> Result.Ok(v)
+        case Error(e) -> Result.Error('Failed to commit: ${e}')
+      }
     }
     case Error(e) -> {
       let _ = exec_sql(db, 'ROLLBACK')
@@ -1112,7 +1116,11 @@ fn pub maintain_memory(
 
   match maintain_memory_inner(db) {
     case Ok(v) -> {
-      let _ = exec_sql(db, 'COMMIT')
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> {}
+        case Error(e) -> return Result.Error('Failed to commit: ${e}')
+      }
+
       let _ = exec_sql(db, 'PRAGMA wal_checkpoint(TRUNCATE)')
 
       Result.Ok(v)
@@ -1488,9 +1496,10 @@ fn pub import_memories(
 
   match import_memories_inner(db, memories) {
     case Ok(v) -> {
-      let _ = exec_sql(db, 'COMMIT')
-
-      Result.Ok(v)
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> Result.Ok(v)
+        case Error(e) -> Result.Error('Failed to commit: ${e}')
+      }
     }
     case Error(e) -> {
       let _ = exec_sql(db, 'ROLLBACK')
