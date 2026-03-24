@@ -160,6 +160,16 @@ fn exec_sql(db: mut Database, sql: String) -> Result[Nil, String] {
   }
 }
 
+# Attempt ROLLBACK and return the original error. If ROLLBACK also fails,
+# append the rollback failure to the error message so the caller knows
+# the transaction may be left in an ambiguous state.
+fn rollback_or_error(db: mut Database, original_error: String) -> String {
+  match exec_sql(db, 'ROLLBACK') {
+    case Ok(_) -> original_error
+    case Error(re) -> '${original_error} (rollback also failed: ${re})'
+  }
+}
+
 fn exec_with_int(
   db: mut Database,
   sql: String,
@@ -257,9 +267,7 @@ fn pub add_memory(
       }
     }
     case Error(e) -> {
-      let _ = exec_sql(db, 'ROLLBACK')
-
-      Result.Error(e)
+      Result.Error(rollback_or_error(db, e))
     }
   }
 }
@@ -782,9 +790,7 @@ fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
       }
     }
     case Error(e) -> {
-      let _ = exec_sql(db, 'ROLLBACK')
-
-      Result.Error(e)
+      Result.Error(rollback_or_error(db, e))
     }
   }
 }
@@ -859,9 +865,7 @@ fn pub update_memory(
       }
     }
     case Error(e) -> {
-      let _ = exec_sql(db, 'ROLLBACK')
-
-      Result.Error(e)
+      Result.Error(rollback_or_error(db, e))
     }
   }
 }
@@ -1180,9 +1184,7 @@ fn pub maintain_memory(
 
     match exec_sql(db, 'SAVEPOINT dry_run') {
       case Error(e) -> {
-        let _ = exec_sql(db, 'ROLLBACK')
-
-        return Result.Error(e)
+        return Result.Error(rollback_or_error(db, e))
       }
       case Ok(_) -> {}
     }
@@ -1196,9 +1198,7 @@ fn pub maintain_memory(
       }
       case Error(e) -> {
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
-        let _ = exec_sql(db, 'ROLLBACK')
-
-        Result.Error(e)
+        Result.Error(rollback_or_error(db, e))
       }
     }
   }
@@ -1220,9 +1220,7 @@ fn pub maintain_memory(
       Result.Ok(v)
     }
     case Error(e) -> {
-      let _ = exec_sql(db, 'ROLLBACK')
-
-      Result.Error(e)
+      Result.Error(rollback_or_error(db, e))
     }
   }
 }
@@ -1606,9 +1604,7 @@ fn pub import_memories(
       }
     }
     case Error(e) -> {
-      let _ = exec_sql(db, 'ROLLBACK')
-
-      Result.Error(e)
+      Result.Error(rollback_or_error(db, e))
     }
   }
 }
@@ -1791,7 +1787,11 @@ fn import_memories_inner(
             )
           {
             case Ok(_) -> {}
-            case Error(_) -> {}
+            case Error(e) -> {
+              failed = failed + 1
+
+              if first_error == '' { first_error = e }
+            }
           }
 
           count = count + 1
