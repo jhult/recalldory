@@ -10,8 +10,11 @@ import std.fs.file (ReadOnlyFile, WriteOnlyFile)
 import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
-import text (count_entity_overlap, escape_json, extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase)
 import std.string (StringBuffer)
+import text (
+  count_entity_overlap, escape_json, extract_entities, has_negation_words,
+  sanitize_fts5_query, to_lowercase,
+)
 
 # Comma-separated list of all memory table columns for SELECT queries.
 # Common SQL column list for memory queries
@@ -95,6 +98,21 @@ fn bind_text(
   }
 }
 
+# Bind text, finalizing the statement on error.
+fn bind_text_or_err(
+  stmt: mut Statement,
+  idx: Int,
+  val: String,
+) -> Result[Nil, String] {
+  match stmt.bind_text(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
 fn bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
   match db_stmt.bind_int(idx, val) {
     case Ok(_) -> Result.Ok(nil)
@@ -102,10 +120,36 @@ fn bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
   }
 }
 
+# Bind int, finalizing the statement on error.
+fn bind_int_or_err(
+  stmt: mut Statement,
+  idx: Int,
+  val: Int,
+) -> Result[Nil, String] {
+  match stmt.bind_int(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
 fn bind_null(db_stmt: mut Statement, idx: Int) -> Result[Nil, String] {
   match db_stmt.bind_null(idx) {
     case Ok(_) -> Result.Ok(nil)
     case Error(e) -> Result.Error('Failed to bind: ${e}')
+  }
+}
+
+# Bind null, finalizing the statement on error.
+fn bind_null_or_err(stmt: mut Statement, idx: Int) -> Result[Nil, String] {
+  match stmt.bind_null(idx) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
   }
 }
 
@@ -173,6 +217,22 @@ fn exec_with_two_ints(
   Result.Ok(db.changes)
 }
 
+# Execute an UPDATE/DELETE and return an error if step fails.
+fn exec_step(db: mut Database, sql: String) -> Result[Int, String] {
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  let result = stmt.step
+
+  stmt.finalize
+
+  if result != SQLITE_DONE { return Result.Error('Statement execution failed') }
+
+  Result.Ok(db.changes)
+}
+
 # --- Core CRUD operations ---
 
 # Add a new memory. Deduplicates exact and near-duplicate content (SimHash distance <= 3).
@@ -204,6 +264,124 @@ fn pub add_memory(
   }
 }
 
+# Check for an exact duplicate by content hash.
+fn check_exact_duplicate(
+  db: mut Database,
+  hash: String,
+) -> Result[Option[(Int, Int)], String] {
+  let mut stmt = match
+    db.prepare('SELECT id, access_count FROM memories WHERE content_hash = ?')
+  {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  match bind_text_or_err(mut stmt, 1, hash) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  let mut result: Option[(Int, Int)] = Option.None
+
+  if stmt.step == SQLITE_ROW {
+    result = Option.Some((stmt.column_int(0), stmt.column_int(1)))
+  }
+
+  stmt.finalize
+  Result.Ok(result)
+}
+
+# Check for a near-duplicate using SimHash LSH bands and Hamming distance.
+fn check_near_duplicate(
+  db: mut Database,
+  simhash_val: String,
+) -> Result[Option[(Int, Int)], String] {
+  let band1 = simhash_substr(simhash_val, 0, 2)
+  let band2 = simhash_substr(simhash_val, 2, 2)
+  let band3 = simhash_substr(simhash_val, 4, 2)
+  let band4 = simhash_substr(simhash_val, 6, 2)
+
+  let near_dup_sql = "SELECT id, access_count, simhash FROM memories WHERE simhash IS NOT NULL AND status != 'superseded' AND (substr(simhash, 1, 2) = ? OR substr(simhash, 3, 2) = ? OR substr(simhash, 5, 2) = ? OR substr(simhash, 7, 2) = ?)"
+  let mut stmt = match db.prepare(near_dup_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  match bind_text_or_err(mut stmt, 1, band1) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut stmt, 2, band2) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut stmt, 3, band3) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut stmt, 4, band4) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  let new_simhash_int = hex_to_int(simhash_val)
+  let mut result: Option[(Int, Int)] = Option.None
+
+  loop {
+    let step_result = stmt.step
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW { break }
+
+    let existing_simhash_str = stmt.column_text(2)
+
+    if existing_simhash_str != '' {
+      let dist = hamming_distance(
+        new_simhash_int,
+        hex_to_int(existing_simhash_str),
+      )
+
+      if dist <= 3 {
+        result = Option.Some((stmt.column_int(0), stmt.column_int(1)))
+        break
+      }
+    }
+  }
+
+  stmt.finalize
+  Result.Ok(result)
+}
+
+# Update access count and last_accessed for a duplicate memory.
+fn touch_duplicate(
+  db: mut Database,
+  dup_id: Int,
+  dup_count: Int,
+) -> Result[Int, String] {
+  exec_with_two_ints(
+    db,
+    "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?",
+    dup_count + 1,
+    dup_id,
+  )
+}
+
+# Bind an optional integer: Some(v) binds as int, None binds as NULL.
+fn bind_optional_int(
+  stmt: mut Statement,
+  idx: Int,
+  val: Option[Int],
+) -> Result[Nil, String] {
+  match val {
+    case Some(v) -> bind_int(stmt, idx, v)
+    case None -> bind_null(stmt, idx)
+  }
+}
+
 fn add_memory_inner(
   db: mut Database,
   content: String,
@@ -211,7 +389,6 @@ fn add_memory_inner(
   scope: String,
   pin: Bool,
 ) -> Result[AddResult, String] {
-  # Enforce maximum content length
   if content.size > MAX_CONTENT_SIZE {
     return Result.Error('Content exceeds maximum size of 64KB')
   }
@@ -220,44 +397,10 @@ fn add_memory_inner(
   let simhash_val = simhash(content)
   let status = if pin { 'pinned' } else { 'active' }
 
-  # Check for exact duplicate first
-  let check_sql = 'SELECT id, access_count FROM memories WHERE content_hash = ?'
-  let mut stmt = match db.prepare(check_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
-  }
-
-  match bind_text(mut stmt, 1, hash) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  let mut existing_id: Option[Int] = Option.None
-  let mut existing_count = 0
-
-  if stmt.step == SQLITE_ROW {
-    existing_id = Option.Some(stmt.column_int(0))
-    existing_count = stmt.column_int(1)
-  }
-
-  stmt.finalize
-
-  match existing_id {
-    case Some(id) -> {
-      match
-        exec_with_two_ints(
-          db,
-          "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?",
-          existing_count + 1,
-          id,
-        )
-      {
-        case Error(e) -> return Result.Error(e)
-        case Ok(_) -> {}
-      }
+  # Check for exact and near-duplicates
+  match check_exact_duplicate(db, hash) {
+    case Ok(Some((id, count))) -> {
+      let _ = touch_duplicate(db, id, count)
 
       return Result.Ok(
         AddResult(
@@ -265,100 +408,17 @@ fn add_memory_inner(
           deduplicated: true,
           contradiction: false,
           contradicts_id: Option.None,
+          contradicts_count: 0,
         ),
       )
     }
-    case None -> {}
+    case Ok(None) -> {}
+    case Error(e) -> return Result.Error(e)
   }
 
-  # Check for near-duplicate using SimHash (Hamming distance <= 3)
-  let band1 = simhash_substr(simhash_val, 0, 2)
-  let band2 = simhash_substr(simhash_val, 2, 2)
-  let band3 = simhash_substr(simhash_val, 4, 2)
-  let band4 = simhash_substr(simhash_val, 6, 2)
-
-  let near_dup_sql = "SELECT id, access_count, simhash FROM memories WHERE simhash IS NOT NULL AND status != 'superseded' AND (substr(simhash, 1, 2) = ? OR substr(simhash, 3, 2) = ? OR substr(simhash, 5, 2) = ? OR substr(simhash, 7, 2) = ?)"
-  let mut near_dup_stmt = match db.prepare(near_dup_sql) {
-    case Ok(s) -> s
-    case Error(e) -> {
-      return Result.Error('Failed to prepare near-dup check: ${e}')
-    }
-  }
-
-  match bind_text(mut near_dup_stmt, 1, band1) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      near_dup_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut near_dup_stmt, 2, band2) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      near_dup_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut near_dup_stmt, 3, band3) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      near_dup_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut near_dup_stmt, 4, band4) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      near_dup_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  let new_simhash_int = hex_to_int(simhash_val)
-  let mut near_dup_id: Option[Int] = Option.None
-  let mut near_dup_count = 0
-
-  loop {
-    let step_result = near_dup_stmt.step
-
-    if step_result == SQLITE_DONE { break }
-
-    if step_result != SQLITE_ROW { break }
-
-    let existing_id = near_dup_stmt.column_int(0)
-    let existing_count = near_dup_stmt.column_int(1)
-    let existing_simhash_str = near_dup_stmt.column_text(2)
-
-    if existing_simhash_str != '' {
-      let existing_simhash_int = hex_to_int(existing_simhash_str)
-      let dist = hamming_distance(new_simhash_int, existing_simhash_int)
-
-      if dist <= 3 {
-        near_dup_id = Option.Some(existing_id)
-        near_dup_count = existing_count
-        break
-      }
-    }
-  }
-
-  near_dup_stmt.finalize
-
-  match near_dup_id {
-    case Some(id) -> {
-      match
-        exec_with_two_ints(
-          db,
-          "UPDATE memories SET access_count = ?, last_accessed = datetime('now'), storage_strength = MIN(10.0, storage_strength + 0.1) WHERE id = ?",
-          near_dup_count + 1,
-          id,
-        )
-      {
-        case Error(e) -> return Result.Error(e)
-        case Ok(_) -> {}
-      }
+  match check_near_duplicate(db, simhash_val) {
+    case Ok(Some((id, count))) -> {
+      let _ = touch_duplicate(db, id, count)
 
       return Result.Ok(
         AddResult(
@@ -366,20 +426,64 @@ fn add_memory_inner(
           deduplicated: true,
           contradiction: false,
           contradicts_id: Option.None,
+          contradicts_count: 0,
         ),
       )
     }
-    case None -> {}
+    case Ok(None) -> {}
+    case Error(e) -> return Result.Error(e)
   }
 
   # Check for contradictions before inserting
-  let (is_contradiction, raw_contradicts_id) = check_contradiction(db, content)
+  let (is_contradiction, contradicting_ids) = check_contradiction(db, content)
 
-  let contradicts_id_val = match raw_contradicts_id {
-    case Some(cid) -> cid
-    case None -> -1
+  let contradicts_id_val = if contradicting_ids.size > 0 {
+    match contradicting_ids.get(0) {
+      case Ok(v) -> v
+      case Error(_) -> -1
+    }
+  } else {
+    -1
   }
-  let has_contradicts = contradicts_id_val >= 0
+
+  # Mark all contradicting existing memories so they appear in list_contradictions
+  if contradicting_ids.size > 0 {
+    let mut placeholders = ''
+    let mut first = true
+
+    for _ in contradicting_ids.iter {
+      if first {
+        placeholders = '?'
+        first = false
+      } else {
+        placeholders = placeholders + ', ?'
+      }
+    }
+
+    let mark_sql = "UPDATE memories SET is_contradiction = 1, updated_at = datetime('now') WHERE id IN (${placeholders})"
+    let mut mark_stmt = match db.prepare(mark_sql) {
+      case Ok(s) -> s
+      case Error(_) -> return Result.Error('Failed to prepare contradiction mark')
+    }
+
+    let mut idx = 1
+    let mut ok = true
+
+    for cid in contradicting_ids.iter {
+      if !ok { break }
+
+      match mark_stmt.bind_int(idx, cid) {
+        case Ok(_) -> {}
+        case Error(_) -> ok = false
+      }
+
+      idx = idx + 1
+    }
+
+    if ok { let _ = mark_stmt.step }
+
+    mark_stmt.finalize
+  }
 
   let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   let mut insert_stmt = match db.prepare(insert_sql) {
@@ -387,77 +491,58 @@ fn add_memory_inner(
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_text(mut insert_stmt, 1, content) {
+  match bind_text_or_err(mut insert_stmt, 1, content) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 2, hash) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 3, tags) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 4, scope) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 5, status) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 6, simhash_val) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match
+    bind_int_or_err(mut insert_stmt, 7, if is_contradiction { 1 } else { 0 })
+  {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match
+    bind_optional_int(
+      mut insert_stmt,
+      8,
+      if contradicts_id_val >= 0 {
+        Option.Some(contradicts_id_val)
+      } else {
+        Option.None
+      },
+    )
+  {
     case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
       return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 2, hash) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 3, tags) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 4, scope) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 5, status) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 6, simhash_val) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_int(mut insert_stmt, 7, if is_contradiction { 1 } else { 0 }) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  if has_contradicts {
-    match bind_int(mut insert_stmt, 8, contradicts_id_val) {
-      case Ok(_) -> {}
-      case Error(e) -> {
-        insert_stmt.finalize
-        return Result.Error(e)
-      }
-    }
-  } else {
-    match bind_null(mut insert_stmt, 8) {
-      case Ok(_) -> {}
-      case Error(e) -> {
-        insert_stmt.finalize
-        return Result.Error(e)
-      }
     }
   }
 
@@ -474,11 +559,12 @@ fn add_memory_inner(
       id: memory_id,
       deduplicated: false,
       contradiction: is_contradiction,
-      contradicts_id: if has_contradicts {
+      contradicts_id: if contradicts_id_val >= 0 {
         Option.Some(contradicts_id_val)
       } else {
         Option.None
       },
+      contradicts_count: contradicting_ids.size,
     ),
   )
 }
@@ -635,23 +721,47 @@ fn pub search_memories(
 
   stmt.finalize
 
-  # Update last_accessed and retrieval_strength for returned memories
-  let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id = ?"
-  let mut touch_stmt = match db.prepare(touch_sql) {
-    case Ok(s) -> s
-    case Error(_) -> return Result.Ok(results)
-  }
+  # Update last_accessed and retrieval_strength for returned memories in a batch
+  if results.size > 0 {
+    let mut id_placeholders = ''
+    let mut ids: Array[Int] = []
+    let mut first = true
 
-  for mem in results.iter {
-    match touch_stmt.bind_int(1, mem.id) {
-      case Ok(_) -> let _ = touch_stmt.step
-      case Error(_) -> {}
+    for mem in results.iter {
+      if first {
+        id_placeholders = '?'
+        first = false
+      } else {
+        id_placeholders = id_placeholders + ', ?'
+      }
+
+      ids.push(mem.id)
     }
 
-    let _ = touch_stmt.reset
-  }
+    let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id IN (${id_placeholders})"
+    let mut touch_stmt = match db.prepare(touch_sql) {
+      case Ok(s) -> s
+      case Error(_) -> return Result.Ok(results)
+    }
 
-  touch_stmt.finalize
+    let mut ok = true
+    let mut idx = 1
+
+    for id in ids.iter {
+      if !ok { break }
+
+      match touch_stmt.bind_int(idx, id) {
+        case Ok(_) -> {}
+        case Error(_) -> ok = false
+      }
+
+      idx = idx + 1
+    }
+
+    if ok { let _ = touch_stmt.step }
+
+    touch_stmt.finalize
+  }
 
   Result.Ok(results)
 }
@@ -664,9 +774,7 @@ fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   }
 
   # FTS5 is auto-synced via DELETE trigger — no manual cleanup needed.
-  match
-    exec_with_int(db, 'DELETE FROM memories WHERE id = ?', id)
-  {
+  match exec_with_int(db, 'DELETE FROM memories WHERE id = ?', id) {
     case Ok(changes) -> {
       match exec_sql(db, 'COMMIT') {
         case Ok(_) -> Result.Ok(changes > 0)
@@ -675,6 +783,7 @@ fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
     }
     case Error(e) -> {
       let _ = exec_sql(db, 'ROLLBACK')
+
       Result.Error(e)
     }
   }
@@ -757,6 +866,60 @@ fn pub update_memory(
   }
 }
 
+# Metadata fetched from an existing memory for versioning.
+type ExistingMemory {
+  let @tags: String
+  let @scope: String
+  let @is_contradiction: Int
+  let @contradicts_id: Option[Int]
+}
+
+# Fetch metadata for an existing memory by ID. Returns Error if not found.
+fn get_existing_memory(
+  db: mut Database,
+  id: Int,
+) -> Result[ExistingMemory, String] {
+  let mut stmt = match
+    db.prepare(
+      'SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?',
+    )
+  {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  match bind_int_or_err(mut stmt, 1, id) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  let result = if stmt.step == SQLITE_ROW {
+    let mut tags = stmt.column_text(0)
+    let mut scope = stmt.column_text(1)
+    let contradiction = stmt.column_int(2)
+    let contradicts_raw = stmt.column_int(3)
+    let contradicts_id = if contradicts_raw > 0 {
+      Option.Some(contradicts_raw)
+    } else {
+      Option.None
+    }
+
+    Result.Ok(
+      ExistingMemory(
+        tags: tags,
+        scope: scope,
+        is_contradiction: contradiction,
+        contradicts_id: contradicts_id,
+      ),
+    )
+  } else {
+    Result.Error('Memory not found: ${id}')
+  }
+
+  stmt.finalize
+  result
+}
+
 fn update_memory_inner(
   db: mut Database,
   id: Int,
@@ -769,64 +932,31 @@ fn update_memory_inner(
   }
 
   # Get the old memory to copy metadata (also serves as existence check)
-  let get_sql = 'SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?'
-  let mut get_stmt = match db.prepare(get_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  let old = match get_existing_memory(db, id) {
+    case Ok(m) -> m
+    case Error(e) -> return Result.Error(e)
   }
 
-  match bind_int(mut get_stmt, 1, id) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      get_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  let mut old_tags = tags
-  let mut old_scope = scope
-  let mut old_contradiction = 0
-  let mut old_contradicts_id: Option[Int] = Option.None
-
-  if get_stmt.step == SQLITE_ROW {
-    if tags == '' { old_tags = get_stmt.column_text(0) }
-
-    if scope == '' { old_scope = get_stmt.column_text(1) }
-
-    old_contradiction = get_stmt.column_int(2)
-
-    let contradicts_raw = get_stmt.column_int(3)
-
-    if contradicts_raw > 0 { old_contradicts_id = Option.Some(contradicts_raw) }
-  } else {
-    get_stmt.finalize
-    return Result.Error('Memory not found: ${id}')
-  }
-
-  get_stmt.finalize
+  let old_tags = if tags == '' { old.tags.to_string } else { tags }
+  let old_scope = if scope == '' { old.scope.to_string } else { scope }
 
   # Check for content_hash collision before superseding old memory
   let hash = sha256_hash(content)
-  let collision_sql = 'SELECT 1 FROM memories WHERE content_hash = ? AND id != ?'
-  let mut coll_stmt = match db.prepare(collision_sql) {
+  let mut coll_stmt = match
+    db.prepare('SELECT 1 FROM memories WHERE content_hash = ? AND id != ?')
+  {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_text(mut coll_stmt, 1, hash) {
+  match bind_text_or_err(mut coll_stmt, 1, hash) {
     case Ok(_) -> {}
-    case Error(e) -> {
-      coll_stmt.finalize
-      return Result.Error(e)
-    }
+    case Error(e) -> return Result.Error(e)
   }
 
-  match bind_int(mut coll_stmt, 2, id) {
+  match bind_int_or_err(mut coll_stmt, 2, id) {
     case Ok(_) -> {}
-    case Error(e) -> {
-      coll_stmt.finalize
-      return Result.Error(e)
-    }
+    case Error(e) -> return Result.Error(e)
   }
 
   let has_collision = coll_stmt.step == SQLITE_ROW
@@ -857,80 +987,46 @@ fn update_memory_inner(
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_text(mut insert_stmt, 1, content) {
+  match bind_text_or_err(mut insert_stmt, 1, content) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 2, hash) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 3, old_tags) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 4, old_scope) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_text_or_err(mut insert_stmt, 5, simhash_val) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_int_or_err(mut insert_stmt, 6, id) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_int_or_err(mut insert_stmt, 7, old.is_contradiction.clone) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_optional_int(mut insert_stmt, 8, old.contradicts_id.clone) {
     case Ok(_) -> {}
     case Error(e) -> {
       insert_stmt.finalize
       return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 2, hash) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 3, old_tags) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 4, old_scope) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_text(mut insert_stmt, 5, simhash_val) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_int(mut insert_stmt, 6, id) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match bind_int(mut insert_stmt, 7, old_contradiction) {
-    case Ok(_) -> {}
-    case Error(e) -> {
-      insert_stmt.finalize
-      return Result.Error(e)
-    }
-  }
-
-  match old_contradicts_id {
-    case Some(cid) -> {
-      match bind_int(mut insert_stmt, 8, cid) {
-        case Ok(_) -> {}
-        case Error(e) -> {
-          insert_stmt.finalize
-          return Result.Error(e)
-        }
-      }
-    }
-    case None -> {
-      match bind_null(mut insert_stmt, 8) {
-        case Ok(_) -> {}
-        case Error(e) -> {
-          insert_stmt.finalize
-          return Result.Error(e)
-        }
-      }
     }
   }
 
@@ -940,92 +1036,58 @@ fn update_memory_inner(
 
   if result != SQLITE_DONE { return Result.Error('Insert failed') }
 
-  let new_id = db.last_insert_rowid as Int
-
-  Result.Ok(new_id)
+  Result.Ok(db.last_insert_rowid as Int)
 }
 
 # Walk the parent_id chain from a memory back to the original, returning all versions.
 fn pub get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
-  let mut history: Array[Memory] = []
+  let history_sql = '
+    WITH RECURSIVE chain(cid, depth) AS (
+      SELECT ?, 0
+      UNION ALL
+      SELECT m.parent_id, c.depth + 1
+        FROM chain c
+        JOIN memories m ON m.id = c.cid
+        WHERE m.parent_id IS NOT NULL AND m.parent_id > 0 AND c.depth < 100
+    )
+    SELECT ${MEMORY_COLUMNS}, parent_id
+      FROM memories
+     WHERE id IN (SELECT cid FROM chain)
+     ORDER BY created_at ASC'
 
-  let sql = 'SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?'
-  let mut stmt = match db.prepare(sql) {
+  let mut stmt = match db.prepare(history_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_int(mut stmt, 1, id) {
+  match bind_int_or_err(mut stmt, 1, id) {
     case Ok(_) -> {}
-    case Error(e) -> {
-      stmt.finalize
-      return Result.Error(e)
-    }
+    case Error(e) -> return Result.Error(e)
   }
 
-  let mut current_id: Option[Int] = Option.None
+  let mut history: Array[Memory] = []
+  let mut found_current = false
 
-  if stmt.step == SQLITE_ROW {
-    current_id = Option.Some(stmt.column_int(0))
-    history.push(Memory.from_row_with_parent(ref stmt))
-  } else {
-    stmt.finalize
-    return Result.Error('Memory not found: ${id}')
+  loop {
+    let step_result = stmt.step
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error('History query failed')
+    }
+
+    let mem = Memory.from_row_with_parent(ref stmt)
+
+    if mem.id == id { found_current = true }
+
+    history.push(mem)
   }
 
   stmt.finalize
 
-  # Follow parent chain
-  let mut visited: Array[Int] = []
-
-  match current_id {
-    case Some(cid) -> {
-      visited.push(cid)
-
-      let mut next_parent = get_parent_id(db, cid)
-
-      loop {
-        match next_parent {
-          case Some(pid) -> {
-            let mut already_visited = false
-
-            for v in visited.iter {
-              if v == pid { already_visited = true }
-            }
-
-            if already_visited { break }
-
-            visited.push(pid)
-
-            let parent_sql = 'SELECT ${MEMORY_COLUMNS}, parent_id FROM memories WHERE id = ?'
-            let mut parent_stmt = match db.prepare(parent_sql) {
-              case Ok(s) -> s
-              case Error(_) -> break
-            }
-
-            match parent_stmt.bind_int(1, pid) {
-              case Error(_) -> {
-                parent_stmt.finalize
-                break
-              }
-              case Ok(_) -> {}
-            }
-
-            if parent_stmt.step == SQLITE_ROW {
-              history.push(Memory.from_row_with_parent(ref parent_stmt))
-              next_parent = get_parent_id(db, pid)
-            } else {
-              next_parent = Option.None
-            }
-
-            parent_stmt.finalize
-          }
-          case None -> break
-        }
-      }
-    }
-    case None -> {}
-  }
+  if !found_current { return Result.Error('Memory not found: ${id}') }
 
   Result.Ok(history)
 }
@@ -1086,7 +1148,10 @@ fn pub list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
 }
 
 # Clear the contradiction flag on a memory, resolving the conflict.
-fn pub resolve_contradiction(db: mut Database, id: Int) -> Result[Bool, String] {
+fn pub resolve_contradiction(
+  db: mut Database,
+  id: Int,
+) -> Result[Bool, String] {
   match
     exec_with_int(
       db,
@@ -1112,22 +1177,27 @@ fn pub maintain_memory(
       case Error(e) -> return Result.Error(e)
       case Ok(_) -> {}
     }
+
     match exec_sql(db, 'SAVEPOINT dry_run') {
       case Error(e) -> {
         let _ = exec_sql(db, 'ROLLBACK')
+
         return Result.Error(e)
       }
       case Ok(_) -> {}
     }
+
     match maintain_memory_inner(db) {
       case Ok(v) -> {
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
         let _ = exec_sql(db, 'ROLLBACK')
+
         Result.Ok(v)
       }
       case Error(e) -> {
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
         let _ = exec_sql(db, 'ROLLBACK')
+
         Result.Error(e)
       }
     }
@@ -1167,7 +1237,11 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare decay: ${e}')
   }
-  let _ = decay_stmt.step
+
+  if decay_stmt.step != SQLITE_DONE {
+    decay_stmt.finalize
+    return Result.Error('Decay update failed')
+  }
 
   decayed = db.changes
   decay_stmt.finalize
@@ -1177,7 +1251,11 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare anti-pattern: ${e}')
   }
-  let _ = anti_stmt.step
+
+  if anti_stmt.step != SQLITE_DONE {
+    anti_stmt.finalize
+    return Result.Error('Anti-pattern promotion failed')
+  }
 
   anti_patterns = db.changes
   anti_stmt.finalize
@@ -1187,7 +1265,11 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare prune: ${e}')
   }
-  let _ = prune_stmt.step
+
+  if prune_stmt.step != SQLITE_DONE {
+    prune_stmt.finalize
+    return Result.Error('Prune failed')
+  }
 
   pruned = db.changes
   prune_stmt.finalize
@@ -1210,26 +1292,22 @@ fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
   }
 
   let result = if stmt.step == SQLITE_ROW {
-    MemoryStats(
-      total: stmt.column_int(0),
-      active: stmt.column_int(1),
-      pinned: stmt.column_int(2),
-      anti_pattern: stmt.column_int(3),
-      avg_strength: stmt.column_double(4),
+    Result.Ok(
+      MemoryStats(
+        total: stmt.column_int(0),
+        active: stmt.column_int(1),
+        pinned: stmt.column_int(2),
+        anti_pattern: stmt.column_int(3),
+        avg_strength: stmt.column_double(4),
+      ),
     )
   } else {
-    MemoryStats(
-      total: 0,
-      active: 0,
-      pinned: 0,
-      anti_pattern: 0,
-      avg_strength: 0.0 as Float64,
-    )
+    Result.Error('Stats query failed')
   }
 
   stmt.finalize
 
-  Result.Ok(result)
+  result
 }
 
 # Rebuild the FTS5 index from the memories table. Returns the total memory count.
@@ -1253,7 +1331,10 @@ fn pub rebuild_fts(db: mut Database) -> Result[Int, String] {
 }
 
 # Generate an AGENTS.md file with pinned memories and anti-patterns at the given path.
-fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
+fn pub generate_agents_md(
+  db: mut Database,
+  path: String,
+) -> Result[Nil, String] {
   if path.contains?('..') { return Result.Error("Path must not contain '..'") }
 
   if path.size > 0 {
@@ -1263,7 +1344,11 @@ fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String]
       case Ok(47) -> {
         match path.strip_prefix('/tmp/') {
           case Some(_) -> {}
-          case None -> return Result.Error('Absolute paths are not allowed (except under /tmp)')
+          case None -> {
+            return Result.Error(
+              'Absolute paths are not allowed (except under /tmp)',
+            )
+          }
         }
       }
       case _ -> {}
@@ -1392,10 +1477,13 @@ fn pub export_memories(db: mut Database) -> Result[String, String] {
     obj.set('id', Json.Int(stmt.column_int(0)))
     obj.set('content', Json.String(stmt.column_text(1)))
     obj.set('content_hash', Json.String(stmt.column_text(2)))
-    obj.set('summary', match stmt.column_text_nullable(3) {
-      case Some(s) -> Json.String(s)
-      case None -> Json.Null
-    })
+    obj.set(
+      'summary',
+      match stmt.column_text_nullable(3) {
+        case Some(s) -> Json.String(s)
+        case None -> Json.Null
+      },
+    )
     obj.set('tags', Json.String(stmt.column_text(4)))
     obj.set('scope', Json.String(stmt.column_text(5)))
     obj.set('status', Json.String(stmt.column_text(6)))
@@ -1410,11 +1498,25 @@ fn pub export_memories(db: mut Database) -> Result[String, String] {
     obj.set('last_accessed', Json.String(stmt.column_text(15)))
     obj.set('storage_strength', Json.Float(stmt.column_double(16) as Float))
     obj.set('retrieval_strength', Json.Float(stmt.column_double(17) as Float))
+
     let parent_id_raw = stmt.column_int(18)
-    obj.set('parent_id', if parent_id_raw > 0 { Json.Int(parent_id_raw) } else { Json.Null })
+
+    obj.set(
+      'parent_id',
+      if parent_id_raw > 0 { Json.Int(parent_id_raw) } else { Json.Null },
+    )
     obj.set('is_contradiction', Json.Int(stmt.column_int(19)))
+
     let contradicts_id_raw = stmt.column_int(20)
-    obj.set('contradicts_id', if contradicts_id_raw > 0 { Json.Int(contradicts_id_raw) } else { Json.Null })
+
+    obj.set(
+      'contradicts_id',
+      if contradicts_id_raw > 0 {
+        Json.Int(contradicts_id_raw)
+      } else {
+        Json.Null
+      },
+    )
     items.push(Json.Object(obj))
   }
 
@@ -1432,6 +1534,28 @@ fn pub import_memories(
   db: mut Database,
   file: String,
 ) -> Result[ImportResult, String] {
+  if file.contains?('..') {
+    return Result.Error("Import path must not contain '..'")
+  }
+
+  if file.size > 0 {
+    let path_bytes = file.to_byte_array
+
+    match path_bytes.get(0) {
+      case Ok(47) -> {
+        match file.strip_prefix('/tmp/') {
+          case Some(_) -> {}
+          case None -> {
+            return Result.Error(
+              'Absolute paths are not allowed (except under /tmp)',
+            )
+          }
+        }
+      }
+      case _ -> {}
+    }
+  }
+
   let path = file.to_path
   let mut f = match ReadOnlyFile.new(path) {
     case Ok(file) -> file
@@ -1439,7 +1563,12 @@ fn pub import_memories(
   }
 
   let mut bytes = ByteArray.new
-  let _ = f.read_all(bytes)
+
+  match f.read_all(bytes) {
+    case Ok(_) -> {}
+    case Error(_) -> return Result.Error('Failed to read import file: ${file}')
+  }
+
   let content = bytes.into_string
 
   if content.size > 10_000_000 {
@@ -1686,13 +1815,13 @@ fn import_memories_inner(
 fn check_contradiction(
   db: mut Database,
   content: String,
-) -> (Bool, Option[Int]) {
+) -> (Bool, Array[Int]) {
   let content_lower = to_lowercase(content)
   let content_bytes = content_lower.to_byte_array
 
   let entities = extract_entities(ref content_bytes)
 
-  if entities.size == 0 { return (false, Option.None) }
+  if entities.size == 0 { return (false, []) }
 
   let has_negation = has_negation_words(ref content_bytes)
 
@@ -1710,21 +1839,23 @@ fn check_contradiction(
     }
   }
 
-  if fts_query == '' { return (false, Option.None) }
+  if fts_query == '' { return (false, []) }
 
   let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = 'active'"
   let mut stmt = match db.prepare(search_sql) {
     case Ok(s) -> s
-    case Error(_) -> return (false, Option.None)
+    case Error(_) -> return (false, [])
   }
 
   match stmt.bind_text(1, fts_query) {
     case Error(_) -> {
       stmt.finalize
-      return (false, Option.None)
+      return (false, [])
     }
     case Ok(_) -> {}
   }
+
+  let mut contradicting_ids: Array[Int] = []
 
   loop {
     let step_result = stmt.step
@@ -1745,15 +1876,18 @@ fn check_contradiction(
       let mem_has_negation = has_negation_words(ref mem_bytes)
 
       if has_negation != mem_has_negation {
-        stmt.finalize
-        return (true, Option.Some(mem_id))
+        contradicting_ids.push(mem_id)
       }
     }
   }
 
   stmt.finalize
 
-  (false, Option.None)
+  if contradicting_ids.size > 0 {
+    (true, contradicting_ids)
+  } else {
+    (false, [])
+  }
 }
 
 fn get_timestamp(db: mut Database) -> String {
