@@ -1,5 +1,6 @@
 import db (to_cstr)
 import memstore (list_memories, open_database)
+import std.bytes (ByteArray)
 import std.env
 import std.fs.file (ReadOnlyFile, WriteOnlyFile)
 import std.io (Buffer)
@@ -10,6 +11,9 @@ import text (escape_json)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
 
+fn extern unlink(path: Pointer[UInt8]) -> Int32
+
+# Handle the post-compact hook: output recent memories as additional context for Claude.
 fn pub handle_hook_post_compact(out: Stdout) {
   let mut context = 'IMPORTANT: Context was just compacted. Here are your preserved memories:\\n\\n'
 
@@ -70,6 +74,8 @@ fn query_memories_for_hook(global: Bool, header: String) -> String {
   }
 }
 
+# Install the post-compact hook into ~/.claude/settings.json. Uses atomic rename
+# to avoid corrupting the settings file.
 fn pub handle_hook_install(out: Stdout) {
   # Resolve path to this executable for the hook command
   let exe_path = match env.executable {
@@ -96,7 +102,15 @@ fn pub handle_hook_install(out: Stdout) {
     case Ok(f) -> {
       let mut file = f
       let mut bytes = ByteArray.new
-      let _ = file.read_all(bytes)
+
+      match file.read_all(bytes) {
+        case Ok(_) -> {}
+        case Error(_) -> {
+          out.print('{"error": "Failed to read existing settings.json"}')
+          return
+        }
+      }
+
       let content = bytes.into_string
       let buffer = Buffer.new(content)
 
@@ -133,9 +147,7 @@ fn pub handle_hook_install(out: Stdout) {
         case Ok(hooks_val) -> {
           match hooks_val {
             case Object(_) -> {}
-            case _ -> {
-              root_map.set('hooks', Json.Object(Map.new))
-            }
+            case _ -> root_map.set('hooks', Json.Object(Map.new))
           }
         }
         case Error(_) -> root_map.set('hooks', Json.Object(Map.new))
@@ -240,6 +252,9 @@ fn pub handle_hook_install(out: Stdout) {
               '{"success": true, "message": "Hook installed to ${escape_json(settings_path)}"}',
             )
           } else {
+            let tmp_cstr = to_cstr(tmp_path)
+            let _ = unlink(tmp_cstr.pointer)
+
             out.print('{"error": "Failed to rename temp file to settings"}')
           }
         }

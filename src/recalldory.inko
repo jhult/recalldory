@@ -12,6 +12,7 @@ import memstore (
 import std.stdio (Stdout)
 import text (escape_json)
 
+# Application entry point.
 type async Main {
   fn async main {
     let out = Stdout.new

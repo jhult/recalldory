@@ -13,12 +13,15 @@ import std.map (Map)
 import text (count_entity_overlap, escape_json, extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase)
 import std.string (StringBuffer)
 
+# Comma-separated list of all memory table columns for SELECT queries.
 # Common SQL column list for memory queries
 let pub MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength'
 
 # Maximum content size: 64KB
 let MAX_CONTENT_SIZE = 65536
 
+# Open (or create) the memory database. If global is true, uses ~/.recalldory/memory.db;
+# otherwise uses ./.recalldory/memory.db. Runs schema init and migrations.
 fn pub open_database(global: Bool) -> Result[Database, String] {
   let path = if global {
     let home = match env.get('HOME') {
@@ -172,6 +175,8 @@ fn exec_with_two_ints(
 
 # --- Core CRUD operations ---
 
+# Add a new memory. Deduplicates exact and near-duplicate content (SimHash distance <= 3).
+# Detects contradictions with existing memories. Wraps the operation in a transaction.
 fn pub add_memory(
   db: mut Database,
   content: String,
@@ -477,6 +482,8 @@ fn add_memory_inner(
   )
 }
 
+# List active memories, optionally filtered by scope and status. Excludes superseded
+# and anti-pattern memories by default when no status filter is given.
 fn pub list_memories(
   db: mut Database,
   scope_filter: String,
@@ -554,6 +561,8 @@ fn pub list_memories(
   Result.Ok(results)
 }
 
+# Full-text search memories using FTS5 bm25 ranking. Updates access counts and
+# retrieval strength for returned memories.
 fn pub search_memories(
   db: mut Database,
   query: String,
@@ -646,6 +655,7 @@ fn pub search_memories(
   Result.Ok(results)
 }
 
+# Delete a memory by ID. FTS5 index is cleaned up via DELETE trigger.
 fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
@@ -667,6 +677,7 @@ fn pub forget_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   }
 }
 
+# Pin a memory so it is excluded from maintenance pruning and decay.
 fn pub pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   match
     exec_with_int(
@@ -680,6 +691,7 @@ fn pub pin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   }
 }
 
+# Unpin a memory, returning it to active status.
 fn pub unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   match
     exec_with_int(
@@ -693,6 +705,7 @@ fn pub unpin_memory(db: mut Database, id: Int) -> Result[Bool, String] {
   }
 }
 
+# Record feedback on a memory. Type must be 'helpful' or 'harmful'.
 fn pub feedback_memory(
   db: mut Database,
   id: Int,
@@ -712,6 +725,8 @@ fn pub feedback_memory(
   }
 }
 
+# Update a memory's content, creating a new version with the old marked as superseded.
+# Empty tags/scope strings preserve the original values. Wraps in a transaction.
 fn pub update_memory(
   db: mut Database,
   id: Int,
@@ -926,6 +941,7 @@ fn update_memory_inner(
   Result.Ok(new_id)
 }
 
+# Walk the parent_id chain from a memory back to the original, returning all versions.
 fn pub get_history(db: mut Database, id: Int) -> Result[Array[Memory], String] {
   let mut history: Array[Memory] = []
 
@@ -1037,6 +1053,7 @@ fn get_parent_id(db: mut Database, id: Int) -> Option[Int] {
   result
 }
 
+# List all memories flagged as contradictions, newest first.
 fn pub list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
   let sql = 'SELECT ${MEMORY_COLUMNS}, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC'
   let mut stmt = match db.prepare(sql) {
@@ -1064,6 +1081,7 @@ fn pub list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
   Result.Ok(results)
 }
 
+# Clear the contradiction flag on a memory, resolving the conflict.
 fn pub resolve_contradiction(db: mut Database, id: Int) -> Result[Bool, String] {
   match
     exec_with_int(
@@ -1079,6 +1097,8 @@ fn pub resolve_contradiction(db: mut Database, id: Int) -> Result[Bool, String] 
 
 # --- Maintenance ---
 
+# Run maintenance: decay retrieval strength, promote harmful memories to anti-patterns,
+# prune weak memories. If dry_run is true, only returns preview counts.
 fn pub maintain_memory(
   db: mut Database,
   dry_run: Bool,
@@ -1198,6 +1218,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   )
 }
 
+# Return aggregate memory statistics (total, active, pinned, anti-pattern, avg strength).
 fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
   let sql = "SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'anti-pattern' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
   let mut stmt = match db.prepare(sql) {
@@ -1228,6 +1249,7 @@ fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
   Result.Ok(result)
 }
 
+# Rebuild the FTS5 index from the memories table. Returns the total memory count.
 fn pub rebuild_fts(db: mut Database) -> Result[Int, String] {
   match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
     case Error(e) -> return Result.Error('Failed to rebuild FTS: ${e}')
@@ -1247,6 +1269,7 @@ fn pub rebuild_fts(db: mut Database) -> Result[Int, String] {
   Result.Ok(count)
 }
 
+# Generate an AGENTS.md file with pinned memories and anti-patterns at the given path.
 fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String] {
   if path.contains?('..') { return Result.Error("Path must not contain '..'") }
 
@@ -1360,6 +1383,7 @@ fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String]
 
 # --- Import / Export ---
 
+# Export all memories as a pretty-printed JSON string.
 fn pub export_memories(db: mut Database) -> Result[String, String] {
   let sql = 'SELECT ${MEMORY_COLUMNS}, parent_id, is_contradiction, contradicts_id FROM memories ORDER BY created_at DESC'
   let mut stmt = match db.prepare(sql) {
@@ -1419,6 +1443,7 @@ fn pub export_memories(db: mut Database) -> Result[String, String] {
   Result.Ok(Json.Object(root).to_pretty_string)
 }
 
+# Import memories from a JSON file. Deduplicates against existing content.
 fn pub import_memories(
   db: mut Database,
   file: String,

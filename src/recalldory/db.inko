@@ -7,11 +7,13 @@ let pub SQLITE_DONE = 101
 let pub SQLITE_NULL = 5
 let pub SQLITE_TRANSIENT = -1
 
+# Wrapper around a raw SQLite database handle.
 type pub Database {
   let mut @handle: Pointer[UInt8]
   let @path: String
 }
 
+# Wrapper around a raw SQLite prepared statement handle.
 type pub Statement {
   let mut @handle: Pointer[UInt8]
 }
@@ -43,8 +45,6 @@ fn extern sqlite3_finalize(stmt: Pointer[UInt8]) -> Int32
 
 fn extern sqlite3_reset(stmt: Pointer[UInt8]) -> Int32
 
-fn extern sqlite3_column_count(stmt: Pointer[UInt8]) -> Int32
-
 fn extern sqlite3_column_type(stmt: Pointer[UInt8], col: Int32) -> Int32
 
 fn extern sqlite3_column_text(
@@ -54,14 +54,9 @@ fn extern sqlite3_column_text(
 
 fn extern sqlite3_column_int(stmt: Pointer[UInt8], col: Int32) -> Int32
 
+fn extern sqlite3_column_int64(stmt: Pointer[UInt8], col: Int32) -> Int64
+
 fn extern sqlite3_column_double(stmt: Pointer[UInt8], col: Int32) -> Float64
-
-fn extern sqlite3_column_bytes(stmt: Pointer[UInt8], col: Int32) -> Int32
-
-fn extern sqlite3_column_blob(
-  stmt: Pointer[UInt8],
-  col: Int32,
-) -> Pointer[UInt8]
 
 fn extern sqlite3_bind_text(
   stmt: Pointer[UInt8],
@@ -69,12 +64,6 @@ fn extern sqlite3_bind_text(
   val: Pointer[UInt8],
   n: Int32,
   destructor: Int64,
-) -> Int32
-
-fn extern sqlite3_bind_int(
-  stmt: Pointer[UInt8],
-  idx: Int32,
-  val: Int32,
 ) -> Int32
 
 fn extern sqlite3_bind_int64(
@@ -91,46 +80,19 @@ fn extern sqlite3_bind_double(
 
 fn extern sqlite3_bind_null(stmt: Pointer[UInt8], idx: Int32) -> Int32
 
-fn extern sqlite3_bind_blob(
-  stmt: Pointer[UInt8],
-  idx: Int32,
-  val: Pointer[UInt8],
-  n: Int32,
-  destructor: Int64,
-) -> Int32
-
 fn extern sqlite3_errmsg(db: Pointer[UInt8]) -> Pointer[UInt8]
 
 fn extern sqlite3_last_insert_rowid(db: Pointer[UInt8]) -> Int64
 
 fn extern sqlite3_changes(db: Pointer[UInt8]) -> Int32
 
-fn extern sqlite3_enable_load_extension(
-  db: Pointer[UInt8],
-  onoff: Int32,
-) -> Int32
-
-fn extern sqlite3_load_extension(
-  db: Pointer[UInt8],
-  file: Pointer[UInt8],
-  proc: Pointer[UInt8],
-  errmsg: Pointer[UInt8],
-) -> Int32
-
-fn extern sqlite3_free(ptr: Pointer[UInt8])
-
 # External C functions for memory management
 fn extern malloc(size: UInt64) -> Pointer[UInt8]
 
 fn extern free(ptr: Pointer[UInt8])
 
-fn extern memcpy(
-  dst: Pointer[UInt8],
-  src: Pointer[UInt8],
-  n: UInt64,
-) -> Pointer[UInt8]
-
 impl Database {
+  # Open a SQLite database at the given path. Sets a 5-second busy timeout.
   fn pub static new(path: String) -> Result[Database, String] {
     # Allocate 8 bytes for the output pointer (64-bit)
     let db_ptr_addr = malloc(8 as UInt64)
@@ -161,14 +123,15 @@ impl Database {
     Result.Ok(db)
   }
 
+  # Close the database handle. Safe to call multiple times.
   fn pub mut close {
     if @handle as Int != 0 {
-      let result = sqlite3_close(@handle)
-
-      if (result as Int) == 0 { @handle = 0 as Pointer[UInt8] }
+      let _ = sqlite3_close(@handle)
+      @handle = 0 as Pointer[UInt8]
     }
   }
 
+  # Execute a SQL statement (no result rows expected).
   fn pub mut exec(sql: String) -> Result[Nil, String] {
     if @handle as Int == 0 { return Result.Error('Database not open') }
 
@@ -190,6 +153,7 @@ impl Database {
     Result.Ok(nil)
   }
 
+  # Prepare a SQL statement for parameterized execution.
   fn pub mut prepare(sql: String) -> Result[Statement, String] {
     if @handle as Int == 0 { return Result.Error('Database not open') }
 
@@ -218,55 +182,24 @@ impl Database {
     Result.Ok(Statement(handle: stmt_ptr))
   }
 
+  # Return the rowid of the most recent successful INSERT.
   fn pub mut last_insert_rowid -> Int64 {
     sqlite3_last_insert_rowid(@handle)
   }
 
+  # Return the number of rows modified by the most recent INSERT/UPDATE/DELETE.
   fn pub mut changes -> Int {
     sqlite3_changes(@handle) as Int
-  }
-
-  fn mut enable_load_extension(enable: Bool) -> Result[Nil, String] {
-    let onoff = if enable { 1 } else { 0 }
-    let result = sqlite3_enable_load_extension(@handle, onoff as Int32)
-
-    if (result as Int) != 0 {
-      return Result.Error('Failed to enable extension loading')
-    }
-
-    Result.Ok(nil)
-  }
-
-  fn mut load_extension(path: String) -> Result[Nil, String] {
-    let path_bytes = to_cstr(path)
-    let errmsg_addr = malloc(8 as UInt64)
-
-    let result = sqlite3_load_extension(
-      @handle,
-      path_bytes.pointer,
-      0 as Pointer[UInt8],
-      errmsg_addr,
-    )
-
-    if (result as Int) != 0 {
-      let errmsg = (errmsg_addr as Pointer[Int64]).0 as Pointer[UInt8]
-      let err_str = pointer_to_string(errmsg)
-
-      sqlite3_free(errmsg)
-      free(errmsg_addr)
-      return Result.Error('Failed to load extension: ${err_str}')
-    }
-
-    free(errmsg_addr)
-    Result.Ok(nil)
   }
 }
 
 impl Statement {
+  # Advance to the next result row. Returns SQLITE_ROW or SQLITE_DONE.
   fn pub mut step -> Int {
     sqlite3_step(@handle) as Int
   }
 
+  # Reset the statement so it can be re-executed with new bindings.
   fn pub mut reset -> Result[Nil, String] {
     let result = sqlite3_reset(@handle)
 
@@ -275,6 +208,7 @@ impl Statement {
     Result.Ok(nil)
   }
 
+  # Finalize and release the prepared statement. Safe to call multiple times.
   fn pub mut finalize {
     if @handle as Int != 0 {
       sqlite3_finalize(@handle)
@@ -282,20 +216,19 @@ impl Statement {
     }
   }
 
-  fn pub column_count -> Int {
-    sqlite3_column_count(@handle) as Int
-  }
-
+  # Return the SQLite type code for a column (e.g. SQLITE_NULL, SQLITE_INTEGER).
   fn pub column_type(col: Int) -> Int {
     sqlite3_column_type(@handle, col as Int32) as Int
   }
 
+  # Return the column value as a string (empty string for SQL NULL).
   fn pub column_text(col: Int) -> String {
     let ptr = sqlite3_column_text(@handle, col as Int32)
 
     pointer_to_string(ptr)
   }
 
+  # Return the column value as a string, or None for SQL NULL.
   fn pub column_text_nullable(col: Int) -> Option[String] {
     if sqlite3_column_type(@handle, col as Int32) as Int == SQLITE_NULL {
       return Option.None
@@ -306,26 +239,17 @@ impl Statement {
     Option.Some(pointer_to_string(ptr))
   }
 
+  # Return the column value as an integer (64-bit).
   fn pub column_int(col: Int) -> Int {
-    sqlite3_column_int(@handle, col as Int32) as Int
+    sqlite3_column_int64(@handle, col as Int32) as Int
   }
 
+  # Return the column value as a Float64.
   fn pub column_double(col: Int) -> Float64 {
     sqlite3_column_double(@handle, col as Int32)
   }
 
-  fn pub column_blob(col: Int) -> ByteArray {
-    let ptr = sqlite3_column_blob(@handle, col as Int32)
-    let len = sqlite3_column_bytes(@handle, col as Int32) as Int
-
-    if len == 0 or ptr as Int == 0 { return ByteArray.new }
-
-    let mut result = ByteArray.filled(with: 0, times: len)
-    let _ = memcpy(result.pointer, ptr, len as UInt64)
-
-    result
-  }
-
+  # Bind a string value to a numbered parameter (1-based).
   fn pub mut bind_text(idx: Int, value: String) -> Result[Nil, String] {
     let bytes = value.to_byte_array
     let result = sqlite3_bind_text(
@@ -341,22 +265,16 @@ impl Statement {
     Result.Ok(nil)
   }
 
+  # Bind an integer value to a numbered parameter (1-based).
   fn pub mut bind_int(idx: Int, value: Int) -> Result[Nil, String] {
-    let result = sqlite3_bind_int(@handle, idx as Int32, value as Int32)
+    let result = sqlite3_bind_int64(@handle, idx as Int32, value as Int64)
 
     if (result as Int) != 0 { return Result.Error('Bind int failed') }
 
     Result.Ok(nil)
   }
 
-  fn pub mut bind_int64(idx: Int, value: Int64) -> Result[Nil, String] {
-    let result = sqlite3_bind_int64(@handle, idx as Int32, value)
-
-    if (result as Int) != 0 { return Result.Error('Bind int64 failed') }
-
-    Result.Ok(nil)
-  }
-
+  # Bind a Float64 value to a numbered parameter (1-based).
   fn pub mut bind_double(idx: Int, value: Float64) -> Result[Nil, String] {
     let result = sqlite3_bind_double(@handle, idx as Int32, value)
 
@@ -365,6 +283,7 @@ impl Statement {
     Result.Ok(nil)
   }
 
+  # Bind NULL to a numbered parameter (1-based).
   fn pub mut bind_null(idx: Int) -> Result[Nil, String] {
     let result = sqlite3_bind_null(@handle, idx as Int32)
 
@@ -372,24 +291,10 @@ impl Statement {
 
     Result.Ok(nil)
   }
-
-  fn pub mut bind_blob(idx: Int, value: ByteArray) -> Result[Nil, String] {
-    let result = sqlite3_bind_blob(
-      @handle,
-      idx as Int32,
-      value.pointer,
-      (value.size as Int32),
-      SQLITE_TRANSIENT as Int64,
-    )
-
-    if (result as Int) != 0 { return Result.Error('Bind blob failed') }
-
-    Result.Ok(nil)
-  }
 }
 
 # Converts a String to a null-terminated byte array for C FFI.
-fn pub to_cstr(s: ref String) -> ByteArray {
+fn pub to_cstr(s: String) -> ByteArray {
   let mut bytes = s.to_byte_array
 
   bytes.push(0)
@@ -401,12 +306,18 @@ fn fts_sql_has_content_option(sql: String) -> Bool {
   sql.contains?('content=')
 }
 
+# Convert a SQLite column text pointer to an owned Inko String.
+# String.from_pointer performs a deep copy of the data, so the returned
+# String is independent of the SQLite statement's memory and remains valid
+# after stmt.step() or stmt.finalize() is called.
 fn pointer_to_string(ptr: Pointer[UInt8]) -> String {
   if ptr as Int == 0 { return '' }
 
   String.from_pointer(ptr)
 }
 
+# Create the core memories table, FTS5 index, and supporting indexes.
+# Safe to call on existing databases (uses IF NOT EXISTS).
 fn pub init_schema(db: mut Database) -> Result[Nil, String] {
   let schema = "
     -- Core memory table
@@ -431,8 +342,14 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
       last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
 
-      -- SimHash for near-duplicate detection (64-bit as hex string)
+      -- SimHash for near-duplicate detection (32-bit as 8-char hex string)
       simhash       TEXT,
+
+      -- LSH bands for indexed near-duplicate detection (2-char substrings)
+      simhash_band1 TEXT,
+      simhash_band2 TEXT,
+      simhash_band3 TEXT,
+      simhash_band4 TEXT,
 
       -- Dual-strength decay
       storage_strength   REAL DEFAULT 0.1,
@@ -467,6 +384,17 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
     CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
     CREATE INDEX IF NOT EXISTS idx_memories_simhash ON memories(simhash);
     CREATE INDEX IF NOT EXISTS idx_memories_parent_id ON memories(parent_id);
+
+    -- LSH band indexes for efficient near-duplicate detection
+    CREATE INDEX IF NOT EXISTS idx_memories_simhash_band1 ON memories(simhash_band1);
+    CREATE INDEX IF NOT EXISTS idx_memories_simhash_band2 ON memories(simhash_band2);
+    CREATE INDEX IF NOT EXISTS idx_memories_simhash_band3 ON memories(simhash_band3);
+    CREATE INDEX IF NOT EXISTS idx_memories_simhash_band4 ON memories(simhash_band4);
+
+    -- Partial index for content deduplication that excludes superseded memories
+    -- This allows re-adding content that was previously superseded
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_content_hash_active
+      ON memories(content_hash) WHERE status != 'superseded';
   "
 
   db.exec(schema)
@@ -483,6 +411,10 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
     'ALTER TABLE memories ADD COLUMN parent_id INTEGER REFERENCES memories(id)',
     'ALTER TABLE memories ADD COLUMN is_contradiction INTEGER DEFAULT 0',
     'ALTER TABLE memories ADD COLUMN contradicts_id INTEGER REFERENCES memories(id)',
+    'ALTER TABLE memories ADD COLUMN simhash_band1 TEXT',
+    'ALTER TABLE memories ADD COLUMN simhash_band2 TEXT',
+    'ALTER TABLE memories ADD COLUMN simhash_band3 TEXT',
+    'ALTER TABLE memories ADD COLUMN simhash_band4 TEXT',
   ]
 
   for sql in migrations.iter {
@@ -494,9 +426,19 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   let indexes = [
     'CREATE INDEX IF NOT EXISTS idx_memories_simhash ON memories(simhash)',
     'CREATE INDEX IF NOT EXISTS idx_memories_parent_id ON memories(parent_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_content_hash_active ON memories(content_hash) WHERE status != \'superseded\'',
+    'CREATE INDEX IF NOT EXISTS idx_memories_simhash_band1 ON memories(simhash_band1)',
+    'CREATE INDEX IF NOT EXISTS idx_memories_simhash_band2 ON memories(simhash_band2)',
+    'CREATE INDEX IF NOT EXISTS idx_memories_simhash_band3 ON memories(simhash_band3)',
+    'CREATE INDEX IF NOT EXISTS idx_memories_simhash_band4 ON memories(simhash_band4)',
   ]
 
   for sql in indexes.iter { let _ = db.exec(sql) }
+
+  # Populate LSH band columns for existing memories that have simhash but no bands
+  let _ = db.exec(
+    "UPDATE memories SET simhash_band1 = substr(simhash, 1, 2), simhash_band2 = substr(simhash, 3, 2), simhash_band3 = substr(simhash, 5, 2), simhash_band4 = substr(simhash, 7, 2) WHERE simhash IS NOT NULL AND simhash_band1 IS NULL",
+  )
 
   # Data migration: set storage_strength from strength (scale 0-1 to 0-10)
   # and set retrieval_strength to 0.5 as neutral starting point.
@@ -542,8 +484,9 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
 # For new databases: creates triggers for the content-synced FTS table.
 # For existing databases: detects standalone FTS, drops it, recreates
 # as content-synced, adds triggers, and rebuilds the index.
+# All DDL operations are wrapped in a transaction for atomicity.
 fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
-  # Check if all 3 sync triggers already exist (fully migrated)
+  # Check if all 3 sync triggers AND FTS table exist (fully migrated)
   let check_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('memories_fts_ai', 'memories_fts_ad', 'memories_fts_au')"
   let mut check_stmt = match db.prepare(check_sql) {
     case Ok(s) -> s
@@ -558,7 +501,23 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
 
   check_stmt.finalize
 
-  if trigger_count == 3 { return Result.Ok(nil) }
+  # Also check if FTS table exists (detect partially-migrated state)
+  let fts_exists_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+  let mut fts_exists_stmt = match db.prepare(fts_exists_sql) {
+    case Ok(s) -> s
+    case Error(_) -> return Result.Ok(nil)
+  }
+
+  let fts_exists = if fts_exists_stmt.step == SQLITE_ROW {
+    fts_exists_stmt.column_int(0) > 0
+  } else {
+    false
+  }
+
+  fts_exists_stmt.finalize
+
+  # Fully migrated: all 3 triggers and FTS table exist
+  if trigger_count == 3 and fts_exists { return Result.Ok(nil) }
 
   # Check if the existing FTS table is standalone (not content-synced).
   # If standalone, we must drop and recreate it.
@@ -575,9 +534,18 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
     # Standalone FTS tables don't have content= in their definition.
     # Simple check: content-synced FTS SQL contains "content="
     if !fts_sql_has_content_option(fts_sql) { need_recreate = true }
+  } else {
+    # FTS table missing but triggers may exist (partial migration) - need recreate
+    if trigger_count > 0 or !fts_exists { need_recreate = true }
   }
 
   fts_stmt.finalize
+
+  # Begin transaction for atomic DDL operations
+  match db.exec('BEGIN') {
+    case Error(e) -> return Result.Error('Failed to begin FTS migration transaction: ${e}')
+    case Ok(_) -> {}
+  }
 
   if need_recreate {
     # Drop any partial triggers from a broken migration
@@ -593,7 +561,10 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
         'CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tags, summary, content=memories, content_rowid=id)',
       )
     {
-      case Error(e) -> return Result.Error('Failed to create FTS table: ${e}')
+      case Error(e) -> {
+        let _ = db.exec('ROLLBACK')
+        return Result.Error('Failed to create FTS table: ${e}')
+      }
       case Ok(_) -> {}
     }
   }
@@ -604,7 +575,10 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
       "CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags, summary) VALUES (new.id, new.content, new.tags, COALESCE(new.summary, '')); END",
     )
   {
-    case Error(e) -> return Result.Error('Failed to create trigger: ${e}')
+    case Error(e) -> {
+      let _ = db.exec('ROLLBACK')
+      return Result.Error('Failed to create trigger: ${e}')
+    }
     case Ok(_) -> {}
   }
 
@@ -613,7 +587,10 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
       "CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary) VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, '')); END",
     )
   {
-    case Error(e) -> return Result.Error('Failed to create trigger: ${e}')
+    case Error(e) -> {
+      let _ = db.exec('ROLLBACK')
+      return Result.Error('Failed to create trigger: ${e}')
+    }
     case Ok(_) -> {}
   }
 
@@ -622,16 +599,31 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
       "CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, summary) VALUES('delete', old.id, old.content, old.tags, COALESCE(old.summary, '')); INSERT INTO memories_fts(rowid, content, tags, summary) VALUES (new.id, new.content, new.tags, COALESCE(new.summary, '')); END",
     )
   {
-    case Error(e) -> return Result.Error('Failed to create trigger: ${e}')
+    case Error(e) -> {
+      let _ = db.exec('ROLLBACK')
+      return Result.Error('Failed to create trigger: ${e}')
+    }
     case Ok(_) -> {}
   }
 
   # Rebuild FTS index if we recreated the table
   if need_recreate {
     match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
-      case Error(e) -> return Result.Error('Failed to rebuild FTS: ${e}')
+      case Error(e) -> {
+        let _ = db.exec('ROLLBACK')
+        return Result.Error('Failed to rebuild FTS: ${e}')
+      }
       case Ok(_) -> {}
     }
+  }
+
+  # Commit transaction
+  match db.exec('COMMIT') {
+    case Error(e) -> {
+      let _ = db.exec('ROLLBACK')
+      return Result.Error('Failed to commit FTS migration: ${e}')
+    }
+    case Ok(_) -> {}
   }
 
   Result.Ok(nil)

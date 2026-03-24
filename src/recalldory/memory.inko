@@ -3,6 +3,7 @@ import std.json (Json)
 import std.map (Map)
 import std.stdio (Stdout)
 
+# A memory record with all database columns plus computed fields.
 type pub Memory {
   let pub @id: Int
   let pub @content: String
@@ -66,14 +67,17 @@ impl Memory {
     )
   }
 
+  # Build from a statement with standard columns, no extra fields.
   fn pub static from_row(stmt: ref Statement) -> Memory {
     build(stmt, 0.0 as Float64, Option.None, Option.None, false)
   }
 
+  # Build from a statement with FTS5 similarity score in column 18.
   fn pub static from_row_with_score(stmt: ref Statement) -> Memory {
     build(stmt, stmt.column_double(18), Option.None, Option.None, false)
   }
 
+  # Build from a statement with parent_id in column 18.
   fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
     let parent = stmt.column_int(18)
     let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
@@ -81,6 +85,7 @@ impl Memory {
     build(stmt, 0.0 as Float64, pid, Option.None, false)
   }
 
+  # Build from a statement with contradicts_id in column 18, marked as contradiction.
   fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
     let contradicts = stmt.column_int(18)
     let cid = if contradicts > 0 {
@@ -93,6 +98,7 @@ impl Memory {
   }
 }
 
+# Result of an add_memory operation.
 type pub AddResult {
   let pub @id: Int
   let pub @deduplicated: Bool
@@ -101,12 +107,14 @@ type pub AddResult {
   let pub @contradicts_count: Int
 }
 
+# Statistics from a maintenance run (decay, anti-pattern promotion, pruning).
 type pub MaintainStats {
   let pub @decayed: Int
   let pub @anti_patterns: Int
   let pub @pruned: Int
 }
 
+# Aggregate memory statistics (counts by status and average strength).
 type pub MemoryStats {
   let pub @total: Int
   let pub @active: Int
@@ -115,12 +123,14 @@ type pub MemoryStats {
   let pub @avg_strength: Float64
 }
 
+# Result of a bulk import operation (imported count, failed count, first error).
 type pub ImportResult {
   let pub @imported: Int
   let pub @failed: Int
   let pub @first_error: String
 }
 
+# Output memories as a JSON results array to stdout.
 fn pub output_memories(memories: Array[Memory], out: Stdout) {
   let mut results: Array[Json] = []
 
@@ -147,6 +157,7 @@ fn pub output_memories(memories: Array[Memory], out: Stdout) {
   out.print(Json.Object(root).to_string)
 }
 
+# Output memory version history as a JSON versions array to stdout.
 fn pub output_history(memories: Array[Memory], out: Stdout) {
   let mut versions: Array[Json] = []
 
@@ -172,6 +183,7 @@ fn pub output_history(memories: Array[Memory], out: Stdout) {
   out.print(Json.Object(root).to_string)
 }
 
+# Output contradictions as a JSON contradictions array to stdout.
 fn pub output_contradictions(memories: Array[Memory], out: Stdout) {
   let mut items: Array[Json] = []
 

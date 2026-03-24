@@ -55,6 +55,7 @@ let pub NEGATION_WORDS = [
   'werent',
 ]
 
+# Convert an ASCII string to lowercase.
 fn pub to_lowercase(s: String) -> String {
   let bytes = s.to_byte_array
   let mut result = ByteArray.new
@@ -71,6 +72,7 @@ fn pub to_lowercase(s: String) -> String {
   result.into_string
 }
 
+# Extract significant words (longer than 3 chars, not common words) from text bytes.
 fn pub extract_entities(bytes: ref ByteArray) -> Array[String] {
   let mut entities: Array[String] = []
   let mut word_bytes: ByteArray = ByteArray.new
@@ -120,6 +122,7 @@ fn pub extract_entities(bytes: ref ByteArray) -> Array[String] {
   entities
 }
 
+# Check if the text contains any negation words (e.g. "not", "never", "avoid").
 fn pub has_negation_words(bytes: ref ByteArray) -> Bool {
   let mut word_bytes: ByteArray = ByteArray.new
   let mut in_word = false
@@ -155,6 +158,7 @@ fn pub has_negation_words(bytes: ref ByteArray) -> Bool {
   false
 }
 
+# Count how many entities appear in both arrays (deduplicated).
 fn pub count_entity_overlap(
   entities1: ref Array[String],
   entities2: ref Array[String],
@@ -211,6 +215,7 @@ fn pub sanitize_fts5_query(query: String) -> String {
   result.into_string
 }
 
+# Escape a string for safe embedding in JSON (handles quotes, backslash, control chars).
 fn pub escape_json(s: String) -> String {
   let hex_chars = '0123456789abcdef'.to_byte_array
   let bytes = s.to_byte_array

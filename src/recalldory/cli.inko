@@ -16,7 +16,39 @@ fn validate_scope(scope: String) -> Bool {
   valid
 }
 
-# Helper for parsing flag arguments from a command's argument list.
+# Valid status values for list command
+let VALID_STATUSES = ['active', 'pinned', 'superseded', 'anti-pattern']
+
+fn validate_status(status: String) -> Bool {
+  let mut valid = false
+
+  for s in VALID_STATUSES.iter {
+    if s == status {
+      valid = true
+      break
+    }
+  }
+
+  valid
+}
+
+# Valid feedback type values
+let VALID_FEEDBACK_TYPES = ['helpful', 'harmful']
+
+fn validate_feedback_type(feedback_type: String) -> Bool {
+  let mut valid = false
+
+  for f in VALID_FEEDBACK_TYPES.iter {
+    if f == feedback_type {
+      valid = true
+      break
+    }
+  }
+
+  valid
+}
+
+# Parses flag arguments (--flag value) from a subcommand's argument slice.
 type FlagParser {
   let @args: Array[String]
   let @start: Int
@@ -25,6 +57,7 @@ type FlagParser {
     FlagParser(args: args, start: start)
   }
 
+  # Find the next argument after --name and return it as a string.
   fn pub string_flag(name: String) -> String {
     let mut i = @start
 
@@ -51,14 +84,13 @@ type FlagParser {
     ''
   }
 
+  # Check if --name is present in the arguments.
   fn pub bool_flag(name: String) -> Bool {
     let mut i = @start
 
     while i < @args.size {
       match @args.get(i) {
-        case Ok(arg) -> {
-          if arg == name { return true }
-        }
+        case Ok(arg) -> if arg == name { return true }
         case Error(_) -> {}
       }
 
@@ -68,6 +100,7 @@ type FlagParser {
     false
   }
 
+  # Parse the next argument after --name as an integer.
   fn pub int_flag(name: String) -> Option[Int] {
     let val = string_flag(name)
 
@@ -77,6 +110,7 @@ type FlagParser {
     }
   }
 
+  # Return the first non-flag argument at the start position, or empty string.
   fn pub positional -> String {
     match @args.get(@start) {
       case Ok(arg) -> {
@@ -128,17 +162,20 @@ type pub enum Command {
   case Db(DbCommand)
 }
 
+# Result of parsing CLI arguments: the resolved command and --global flag.
 type pub ParsedArgs {
   let pub @command: Command
   let pub @global: Bool
 }
 
 impl ParsedArgs {
+  # Consume and return the parsed Command.
   fn pub move into_command -> Command {
     @command
   }
 }
 
+# Parse CLI arguments into a ParsedArgs. Returns None if help should be shown.
 fn pub parse_args -> Option[ParsedArgs] {
   let raw_args = env.arguments
   let mut global = false
@@ -293,8 +330,7 @@ fn parse_feedback(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  if !validate_feedback_type(feedback_type) { return Option.None }
-
+  # Don't validate here - let feedback_memory return a proper error message
   Option.Some(Command.Db(DbCommand.Feedback(id, feedback_type)))
 }
 

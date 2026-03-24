@@ -2,6 +2,7 @@ import std.bytes (ByteArray)
 import std.crypto.sha2 (Sha256)
 import std.string (StringBuffer)
 
+# Compute the SHA-256 hash of a string, returned as a 64-char lowercase hex string.
 fn pub sha256_hash(content: String) -> String {
   let bytes = content.to_byte_array
   let mut hash = Sha256.new
@@ -10,6 +11,8 @@ fn pub sha256_hash(content: String) -> String {
   hash.finish.to_string
 }
 
+# Compute a 32-bit SimHash of the input, returned as an 8-char lowercase hex string.
+# Uses 3-byte shingling with FNV-1a for short inputs, or SHA256-based for very short strings.
 fn pub simhash(content: String) -> String {
   let bytes = content.to_byte_array
   let size = bytes.size
@@ -67,6 +70,7 @@ fn pub simhash(content: String) -> String {
   int_to_hex(result)
 }
 
+# Convert a 32-bit integer to a zero-padded 8-char lowercase hex string.
 fn pub int_to_hex(val: Int) -> String {
   let hex_chars = '0123456789abcdef'.to_byte_array
   let mut result = StringBuffer.new
@@ -94,6 +98,7 @@ fn pub int_to_hex(val: Int) -> String {
   result.into_string
 }
 
+# Extract a substring of hex characters, clamped to the string length.
 fn pub simhash_substr(hex: String, start: Int, len: Int) -> String {
   let bytes = hex.to_byte_array
   let mut result = ByteArray.new
@@ -114,6 +119,7 @@ fn pub simhash_substr(hex: String, start: Int, len: Int) -> String {
   result.into_string
 }
 
+# Parse a hex string into an integer.
 fn pub hex_to_int(hex: String) -> Int {
   let bytes = hex.to_byte_array
   let mut result = 0
