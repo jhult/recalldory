@@ -1107,7 +1107,31 @@ fn pub maintain_memory(
   db: mut Database,
   dry_run: Bool,
 ) -> Result[MaintainStats, String] {
-  if dry_run { return maintain_memory_preview(db) }
+  if dry_run {
+    match exec_sql(db, 'BEGIN') {
+      case Error(e) -> return Result.Error(e)
+      case Ok(_) -> {}
+    }
+    match exec_sql(db, 'SAVEPOINT dry_run') {
+      case Error(e) -> {
+        let _ = exec_sql(db, 'ROLLBACK')
+        return Result.Error(e)
+      }
+      case Ok(_) -> {}
+    }
+    match maintain_memory_inner(db) {
+      case Ok(v) -> {
+        let _ = exec_sql(db, 'ROLLBACK TO dry_run')
+        let _ = exec_sql(db, 'ROLLBACK')
+        Result.Ok(v)
+      }
+      case Error(e) -> {
+        let _ = exec_sql(db, 'ROLLBACK TO dry_run')
+        let _ = exec_sql(db, 'ROLLBACK')
+        Result.Error(e)
+      }
+    }
+  }
 
   match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
@@ -1131,55 +1155,6 @@ fn pub maintain_memory(
       Result.Error(e)
     }
   }
-}
-
-fn maintain_memory_preview(db: mut Database) -> Result[MaintainStats, String] {
-  let decay_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
-  let mut decay_stmt = match db.prepare(decay_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
-  }
-  let decayed = if decay_stmt.step == SQLITE_ROW {
-    decay_stmt.column_int(0)
-  } else {
-    0
-  }
-
-  decay_stmt.finalize
-
-  let anti_sql = "SELECT COUNT(*) FROM memories WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
-  let mut anti_stmt = match db.prepare(anti_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
-  }
-  let anti_patterns = if anti_stmt.step == SQLITE_ROW {
-    anti_stmt.column_int(0)
-  } else {
-    0
-  }
-
-  anti_stmt.finalize
-
-  let prune_sql = "SELECT COUNT(*) FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
-  let mut prune_stmt = match db.prepare(prune_sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
-  }
-  let pruned = if prune_stmt.step == SQLITE_ROW {
-    prune_stmt.column_int(0)
-  } else {
-    0
-  }
-
-  prune_stmt.finalize
-
-  Result.Ok(
-    MaintainStats(
-      decayed: decayed,
-      anti_patterns: anti_patterns,
-      pruned: pruned,
-    ),
-  )
 }
 
 fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
