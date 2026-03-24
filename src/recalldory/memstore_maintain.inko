@@ -1,0 +1,159 @@
+import db (Database, SQLITE_DONE, SQLITE_ROW)
+import memory (MaintainStats, MemoryStats)
+import memstore_helpers (exec_sql, exec_step, rollback_or_error)
+
+fn pub maintain_memory(
+  db: mut Database,
+  dry_run: Bool,
+) -> Result[MaintainStats, String] {
+  if dry_run {
+    match exec_sql(db, 'BEGIN') {
+      case Error(e) -> return Result.Error(e)
+      case Ok(_) -> {}
+    }
+
+    match exec_sql(db, 'SAVEPOINT dry_run') {
+      case Error(e) -> {
+        return Result.Error(rollback_or_error(db, e))
+      }
+      case Ok(_) -> {}
+    }
+
+    match maintain_memory_inner(db) {
+      case Ok(v) -> {
+        let _ = exec_sql(db, 'ROLLBACK TO dry_run')
+        let _ = exec_sql(db, 'ROLLBACK')
+
+        Result.Ok(v)
+      }
+      case Error(e) -> {
+        let _ = exec_sql(db, 'ROLLBACK TO dry_run')
+        Result.Error(rollback_or_error(db, e))
+      }
+    }
+  }
+
+  match exec_sql(db, 'BEGIN') {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
+
+  match maintain_memory_inner(db) {
+    case Ok(v) -> {
+      match exec_sql(db, 'COMMIT') {
+        case Ok(_) -> {}
+        case Error(e) -> return Result.Error('Failed to commit: ${e}')
+      }
+
+      let _ = exec_sql(db, 'PRAGMA wal_checkpoint(TRUNCATE)')
+
+      Result.Ok(v)
+    }
+    case Error(e) -> {
+      Result.Error(rollback_or_error(db, e))
+    }
+  }
+}
+
+fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
+  let mut decayed = 0
+  let mut anti_patterns = 0
+  let mut pruned = 0
+
+  let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
+  let mut decay_stmt = match db.prepare(decay_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare decay: ${e}')
+  }
+
+  if decay_stmt.step != SQLITE_DONE {
+    decay_stmt.finalize
+    return Result.Error('Decay update failed')
+  }
+
+  decayed = db.changes
+  decay_stmt.finalize
+
+  let anti_sql = "UPDATE memories SET status = 'anti-pattern', is_negative = 1, updated_at = datetime('now') WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
+  let mut anti_stmt = match db.prepare(anti_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare anti-pattern: ${e}')
+  }
+
+  if anti_stmt.step != SQLITE_DONE {
+    anti_stmt.finalize
+    return Result.Error('Anti-pattern promotion failed')
+  }
+
+  anti_patterns = db.changes
+  anti_stmt.finalize
+
+  let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
+  let mut prune_stmt = match db.prepare(prune_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare prune: ${e}')
+  }
+
+  if prune_stmt.step != SQLITE_DONE {
+    prune_stmt.finalize
+    return Result.Error('Prune failed')
+  }
+
+  pruned = db.changes
+  prune_stmt.finalize
+
+  Result.Ok(
+    MaintainStats(
+      decayed: decayed,
+      anti_patterns: anti_patterns,
+      pruned: pruned,
+    ),
+  )
+}
+
+# Return aggregate memory statistics (total, active, pinned, anti-pattern, avg strength).
+fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
+  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'anti-pattern' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  let result = if stmt.step == SQLITE_ROW {
+    Result.Ok(
+      MemoryStats(
+        total: stmt.column_int(0),
+        active: stmt.column_int(1),
+        pinned: stmt.column_int(2),
+        anti_pattern: stmt.column_int(3),
+        avg_strength: stmt.column_double(4),
+      ),
+    )
+  } else {
+    Result.Error('Stats query failed')
+  }
+
+  stmt.finalize
+
+  result
+}
+
+# Rebuild the FTS5 index from the memories table. Returns the total memory count.
+fn pub rebuild_fts(db: mut Database) -> Result[Int, String] {
+  match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
+    case Error(e) -> return Result.Error('Failed to rebuild FTS: ${e}')
+    case Ok(_) -> {}
+  }
+
+  let sql = 'SELECT COUNT(*) FROM memories'
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to count: ${e}')
+  }
+
+  let count = if stmt.step == SQLITE_ROW { stmt.column_int(0) } else { 0 }
+
+  stmt.finalize
+
+  Result.Ok(count)
+}

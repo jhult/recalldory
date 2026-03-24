@@ -1,5 +1,6 @@
-import db (to_cstr)
-import memstore (list_memories, open_database)
+import recalldory.db (to_cstr)
+import recalldory.memstore (open_database)
+import recalldory.memstore_crud (list_memories)
 import std.bytes (ByteArray)
 import std.env
 import std.fs.file (ReadOnlyFile, WriteOnlyFile)
@@ -7,7 +8,7 @@ import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
 import std.stdio (Stdout)
-import text (escape_json)
+import recalldory.text (escape_json)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
 
@@ -31,11 +32,11 @@ fn pub handle_hook_post_compact(out: Stdout) {
   if global_section != '' { context = context + global_section }
 
   if project_section != '' or global_section != '' {
-    out.print(
+    let _ = out.print(
       '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "${context}"}}',
     )
   } else {
-    out.print(
+    let _ = out.print(
       '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ""}}',
     )
   }
@@ -84,7 +85,7 @@ fn pub handle_hook_install(out: Stdout) {
   let exe_path = match env.executable {
     case Ok(p) -> p.to_string
     case Error(_) -> {
-      out.print('{"error": "Cannot determine recalldory executable path"}')
+      let _ = out.print('{"error": "Cannot determine recalldory executable path"}')
       return
     }
   }
@@ -92,7 +93,7 @@ fn pub handle_hook_install(out: Stdout) {
   let home = match env.get('HOME') {
     case Ok(h) -> h
     case Error(_) -> {
-      out.print('{"error": "HOME not set"}')
+      let _ = out.print('{"error": "HOME not set"}')
       return
     }
   }
@@ -109,7 +110,7 @@ fn pub handle_hook_install(out: Stdout) {
       match file.read_all(bytes) {
         case Ok(_) -> {}
         case Error(_) -> {
-          out.print('{"error": "Failed to read existing settings.json"}')
+          let _ = out.print('{"error": "Failed to read existing settings.json"}')
           return
         }
       }
@@ -120,7 +121,7 @@ fn pub handle_hook_install(out: Stdout) {
       match Json.parse(buffer) {
         case Ok(json) -> json
         case Error(_) -> {
-          out.print(
+          let _ = out.print(
             '{"error": "Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry."}',
           )
           return
@@ -192,7 +193,7 @@ fn pub handle_hook_install(out: Stdout) {
               }
 
               if already_installed {
-                out.print(
+                let _ = out.print(
                   '{"success": true, "message": "Hook already installed"}',
                 )
                 return
@@ -229,7 +230,7 @@ fn pub handle_hook_install(out: Stdout) {
       }
     }
     case _ -> {
-      out.print('{"error": "settings.json root is not an object"}')
+      let _ = out.print('{"error": "settings.json root is not an object"}')
       return
     }
   }
@@ -251,20 +252,20 @@ fn pub handle_hook_install(out: Stdout) {
           let rename_result = rename(src.pointer, dst.pointer)
 
           if (rename_result as Int) == 0 {
-            out.print(
+            let _ = out.print(
               '{"success": true, "message": "Hook installed to ${escape_json(settings_path)}"}',
             )
           } else {
             let tmp_cstr = to_cstr(tmp_path)
             let _ = unlink(tmp_cstr.pointer)
 
-            out.print('{"error": "Failed to rename temp file to settings"}')
+            let _ = out.print('{"error": "Failed to rename temp file to settings"}')
           }
         }
         case Error(e) -> {
           let err_msg = '${e}'
 
-          out.print(
+          let _ = out.print(
             '{"error": "Failed to write settings: ${escape_json(err_msg)}"}',
           )
         }
@@ -273,7 +274,7 @@ fn pub handle_hook_install(out: Stdout) {
     case Error(e) -> {
       let err_msg = '${e}'
 
-      out.print(
+      let _ = out.print(
         '{"error": "Failed to open temp file for writing: ${escape_json(err_msg)}"}',
       )
     }

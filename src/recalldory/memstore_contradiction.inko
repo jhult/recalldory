@@ -1,0 +1,139 @@
+import db (Database, SQLITE_ROW, SQLITE_DONE)
+import memory (Memory)
+import memstore_helpers (MEMORY_COLUMNS, exec_with_int)
+import text (
+  extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase,
+  count_entity_overlap,
+)
+
+# --- Contradiction detection ---
+
+# Check whether a new memory contradicts any existing active memories.
+# Returns a Result containing a tuple of (has_contradiction, array_of_contradicting_ids).
+# Contradictions are detected by finding memories that share >= 2 entities
+# but differ in negation status (e.g. "X is true" vs "X is not true").
+fn pub check_contradiction(
+  db: mut Database,
+  content: String,
+) -> Result[(Bool, Array[Int]), String] {
+  let content_lower = to_lowercase(content)
+  let content_bytes = content_lower.to_byte_array
+
+  let entities = extract_entities(ref content_bytes)
+
+  if entities.size == 0 { return Result.Ok((false, [])) }
+
+  let has_negation = has_negation_words(ref content_bytes)
+
+  let mut fts_query = ''
+  let mut first = true
+
+  for entity in entities.iter {
+    let safe_entity = sanitize_fts5_query(entity)
+
+    if first {
+      fts_query = safe_entity
+      first = false
+    } else {
+      fts_query = fts_query + ' OR ' + safe_entity
+    }
+  }
+
+  if fts_query == '' { return Result.Ok((false, [])) }
+
+  let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = 'active'"
+  let mut stmt = match db.prepare(search_sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare contradiction search: ${e}')
+  }
+
+  match stmt.bind_text(1, fts_query) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error('Failed to bind contradiction query: ${e}')
+    }
+    case Ok(_) -> {}
+  }
+
+  let mut contradicting_ids: Array[Int] = []
+
+  loop {
+    let step_result = stmt.step
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error('Contradiction search query failed')
+    }
+
+    let mem_id = stmt.column_int(0)
+    let mem_content = stmt.column_text(1)
+    let mem_lower = to_lowercase(mem_content)
+    let mem_bytes = mem_lower.to_byte_array
+
+    let mem_entities = extract_entities(ref mem_bytes)
+    let overlap_count = count_entity_overlap(ref entities, ref mem_entities)
+
+    if overlap_count >= 2 {
+      let mem_has_negation = has_negation_words(ref mem_bytes)
+
+      if has_negation != mem_has_negation {
+        contradicting_ids.push(mem_id)
+      }
+    }
+  }
+
+  stmt.finalize
+
+  if contradicting_ids.size > 0 {
+    Result.Ok((true, contradicting_ids))
+  } else {
+    Result.Ok((false, []))
+  }
+}
+
+# List all memories flagged as contradictions, newest first.
+fn pub list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
+  let sql = 'SELECT ${MEMORY_COLUMNS}, contradicts_id FROM memories WHERE is_contradiction = 1 ORDER BY created_at DESC'
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  let mut results: Array[Memory] = []
+
+  loop {
+    let step_result = stmt.step
+
+    if step_result == SQLITE_DONE { break }
+
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error('Query failed')
+    }
+
+    results.push(Memory.from_row_with_contradicts(ref stmt))
+  }
+
+  stmt.finalize
+
+  Result.Ok(results)
+}
+
+# Clear the contradiction flag on a memory, resolving the conflict.
+fn pub resolve_contradiction(
+  db: mut Database,
+  id: Int,
+) -> Result[Bool, String] {
+  match
+    exec_with_int(
+      db,
+      "UPDATE memories SET is_contradiction = 0, contradicts_id = NULL, updated_at = datetime('now') WHERE id = ?",
+      id,
+    )
+  {
+    case Ok(changes) -> Result.Ok(changes > 0)
+    case Error(e) -> Result.Error(e)
+  }
+}

@@ -1,10 +1,11 @@
-import db (Database, init_schema, migrate_schema, to_cstr)
-import memstore (
-  add_memory, export_memories, feedback_memory, forget_memory, get_history,
-  get_stats, import_memories, list_contradictions, list_memories,
-  maintain_memory, pin_memory, rebuild_fts, resolve_contradiction,
-  search_memories, unpin_memory, update_memory,
+import recalldory.db (Database, init_schema, migrate_schema, to_cstr)
+import recalldory.memstore_crud (
+  add_memory, feedback_memory, forget_memory, get_history, list_memories,
+  pin_memory, search_memories, unpin_memory, update_memory,
 )
+import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
+import recalldory.memstore_contradiction (list_contradictions, resolve_contradiction)
+import recalldory.memstore_import (export_memories, import_memories)
 import std.fs.file (WriteOnlyFile)
 import std.test (Tests)
 
@@ -13,7 +14,7 @@ fn extern remove(path: Pointer[UInt8]) -> Int32
 fn test_db(name: String) -> Database {
   let dir = '.recalldory'.to_path
 
-  dir.create_directory
+  let _ = dir.create_directory
 
   let path = '.recalldory/${name}.db'
 

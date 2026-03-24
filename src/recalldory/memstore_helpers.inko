@@ -1,0 +1,156 @@
+import recalldory.db (Database, SQLITE_DONE, Statement)
+
+# Comma-separated list of all memory table columns for SELECT queries.
+let pub MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength'
+
+# Maximum content size: 64KB
+let pub MAX_CONTENT_SIZE = 65536
+
+fn pub bind_text(
+  db_stmt: mut Statement,
+  idx: Int,
+  val: String,
+) -> Result[Nil, String] {
+  match db_stmt.bind_text(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
+  }
+}
+
+fn pub bind_text_or_err(
+  stmt: mut Statement,
+  idx: Int,
+  val: String,
+) -> Result[Nil, String] {
+  match stmt.bind_text(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
+fn pub bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
+  match db_stmt.bind_int(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
+  }
+}
+
+fn pub bind_int_or_err(
+  stmt: mut Statement,
+  idx: Int,
+  val: Int,
+) -> Result[Nil, String] {
+  match stmt.bind_int(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
+fn pub bind_null(db_stmt: mut Statement, idx: Int) -> Result[Nil, String] {
+  match db_stmt.bind_null(idx) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
+  }
+}
+
+fn pub bind_null_or_err(stmt: mut Statement, idx: Int) -> Result[Nil, String] {
+  match stmt.bind_null(idx) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
+fn pub exec_sql(db: mut Database, sql: String) -> Result[Nil, String] {
+  match db.exec(sql) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error(e)
+  }
+}
+
+fn pub rollback_or_error(db: mut Database, original_error: String) -> String {
+  match exec_sql(db, 'ROLLBACK') {
+    case Ok(_) -> original_error
+    case Error(re) -> '${original_error} (rollback also failed: ${re})'
+  }
+}
+
+fn pub exec_with_int(
+  db: mut Database,
+  sql: String,
+  value: Int,
+) -> Result[Int, String] {
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  match stmt.bind_int(1, value) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error('Failed to bind: ${e}')
+    }
+    case Ok(_) -> {}
+  }
+
+  let _ = stmt.step
+
+  stmt.finalize
+  Result.Ok(db.changes)
+}
+
+fn pub exec_with_two_ints(
+  db: mut Database,
+  sql: String,
+  val1: Int,
+  val2: Int,
+) -> Result[Int, String] {
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  match stmt.bind_int(1, val1) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error('Failed to bind: ${e}')
+    }
+    case Ok(_) -> {}
+  }
+
+  match stmt.bind_int(2, val2) {
+    case Error(e) -> {
+      stmt.finalize
+      return Result.Error('Failed to bind: ${e}')
+    }
+    case Ok(_) -> {}
+  }
+
+  let _ = stmt.step
+
+  stmt.finalize
+  Result.Ok(db.changes)
+}
+
+fn pub exec_step(db: mut Database, sql: String) -> Result[Int, String] {
+  let mut stmt = match db.prepare(sql) {
+    case Ok(s) -> s
+    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+  }
+
+  let result = stmt.step
+
+  stmt.finalize
+
+  if result != SQLITE_DONE { return Result.Error('Statement execution failed') }
+
+  Result.Ok(db.changes)
+}

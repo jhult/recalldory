@@ -19,7 +19,7 @@ jobs:
         run: inko fmt --check src/ test/
 
       - name: Build
-        run: inko build
+        run: inko build src/recalldory.inko
 
       - name: Test
         run: inko test

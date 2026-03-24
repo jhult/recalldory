@@ -2,13 +2,14 @@ import cli (DbCommand, parse_args)
 import db (Database)
 import hooks (handle_hook_install, handle_hook_post_compact)
 import memory (output_contradictions, output_history, output_memories)
-import memstore (
-  add_memory, export_memories, feedback_memory, forget_memory,
-  generate_agents_md, get_history, get_stats, import_memories,
-  list_contradictions, list_memories, maintain_memory, open_database,
-  pin_memory, rebuild_fts, resolve_contradiction, search_memories, unpin_memory,
-  update_memory,
+import memstore (open_database)
+import memstore_crud (
+  add_memory, feedback_memory, forget_memory, get_history, list_memories,
+  pin_memory, search_memories, unpin_memory, update_memory,
 )
+import memstore_maintain (get_stats, maintain_memory, rebuild_fts)
+import memstore_contradiction (list_contradictions, resolve_contradiction)
+import memstore_import (export_memories, generate_agents_md, import_memories)
 import std.stdio (Stdout)
 import text (escape_json)
 
