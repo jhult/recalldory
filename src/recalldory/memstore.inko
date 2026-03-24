@@ -1278,8 +1278,9 @@ fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String]
 
     match path_bytes.get(0) {
       case Ok(47) -> {
-        if !path.contains?('/tmp') {
-          return Result.Error('Absolute paths are not allowed (except /tmp)')
+        match path.strip_prefix('/tmp/') {
+          case Some(_) -> {}
+          case None -> return Result.Error('Absolute paths are not allowed (except under /tmp)')
         }
       }
       case _ -> {}
