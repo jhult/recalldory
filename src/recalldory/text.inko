@@ -1,0 +1,269 @@
+import std.bytes (ByteArray)
+
+# Common words to ignore for entity extraction
+let pub COMMON_WORDS = [
+  'the',
+  'that',
+  'this',
+  'with',
+  'from',
+  'have',
+  'been',
+  'were',
+  'what',
+  'when',
+  'where',
+  'which',
+  'while',
+  'about',
+  'would',
+  'could',
+  'should',
+  'their',
+  'there',
+  'these',
+  'those',
+  'being',
+]
+
+# Negation words for contradiction detection
+let pub NEGATION_WORDS = [
+  'not',
+  'never',
+  'dont',
+  'avoid',
+  'cannot',
+  'neither',
+  'nobody',
+  'nothing',
+  'nowhere',
+  'none',
+  'without',
+  'cant',
+  'wont',
+  'shouldnt',
+  'isnt',
+  'couldnt',
+  'wouldnt',
+  'hasnt',
+  'havent',
+  'arent',
+  'doesnt',
+  'didnt',
+  'wasnt',
+  'werent',
+]
+
+fn pub to_lowercase(s: String) -> String {
+  let bytes = s.to_byte_array
+  let mut result = ByteArray.new
+
+  for byte in bytes.iter {
+    if byte >= 65 and byte <= 90 {
+      # Convert uppercase to lowercase by adding 32 to ASCII value
+      result.push(byte + 32)
+    } else {
+      result.push(byte)
+    }
+  }
+
+  result.into_string
+}
+
+fn pub extract_entities(bytes: ref ByteArray) -> Array[String] {
+  let mut entities: Array[String] = []
+  let mut word_bytes: ByteArray = ByteArray.new
+  let mut in_word = false
+
+  for byte in bytes.iter {
+    let is_alphanum = (byte >= 48 and byte <= 57)
+      or (byte >= 65 and byte <= 90)
+      or (byte >= 97 and byte <= 122)
+
+    if is_alphanum {
+      word_bytes.push(byte)
+      in_word = true
+    } else if in_word {
+      if word_bytes.size > 3 {
+        let word_str = word_bytes.clone.into_string
+        let mut is_common = false
+
+        for common in COMMON_WORDS.iter {
+          if word_str == common {
+            is_common = true
+            break
+          }
+        }
+
+        if !is_common { entities.push(word_str) }
+      }
+
+      word_bytes = ByteArray.new
+      in_word = false
+    }
+  }
+
+  # Handle last word
+  if in_word and word_bytes.size > 3 {
+    let word_str = word_bytes.clone.into_string
+
+    let mut is_common = false
+
+    for common in COMMON_WORDS.iter {
+      if word_str == common { is_common = true }
+    }
+
+    if !is_common { entities.push(word_str) }
+  }
+
+  entities
+}
+
+fn pub has_negation_words(bytes: ref ByteArray) -> Bool {
+  let mut word_bytes: ByteArray = ByteArray.new
+  let mut in_word = false
+
+  for byte in bytes.iter {
+    let is_alphanum = (byte >= 48 and byte <= 57)
+      or (byte >= 65 and byte <= 90)
+      or (byte >= 97 and byte <= 122)
+
+    if is_alphanum {
+      word_bytes.push(byte)
+      in_word = true
+    } else if in_word {
+      let word_str = word_bytes.clone.into_string
+
+      for neg in NEGATION_WORDS.iter {
+        if word_str == neg { return true }
+      }
+
+      word_bytes = ByteArray.new
+      in_word = false
+    }
+  }
+
+  if in_word {
+    let word_str = word_bytes.clone.into_string
+
+    for neg in NEGATION_WORDS.iter {
+      if word_str == neg { return true }
+    }
+  }
+
+  false
+}
+
+fn pub count_entity_overlap(
+  entities1: ref Array[String],
+  entities2: ref Array[String],
+) -> Int {
+  let mut count = 0
+  let mut matched: Array[String] = []
+
+  for e1 in entities1.iter {
+    for e2 in entities2.iter {
+      if e1 == e2 {
+        let mut already = false
+
+        for m in matched.iter {
+          if m == e2 {
+            already = true
+            break
+          }
+        }
+
+        if !already {
+          count = count + 1
+          matched.push(e2)
+        }
+
+        break
+      }
+    }
+  }
+
+  count
+}
+
+# Sanitize a string for use in FTS5 MATCH queries.
+# Returns the query with double quotes escaped by doubling.
+# Does NOT wrap in outer quotes - use token search for general queries.
+#
+# NOTE: This function does NOT strip FTS5 query syntax. Users can use
+# advanced features like prefix matching (term*), NEAR, AND, OR, NOT,
+# and column qualifiers. This is intentional for power users but may
+# result in unexpected matches or performance for untrusted input.
+fn pub sanitize_fts5_query(query: String) -> String {
+  let bytes = query.to_byte_array
+  let mut result = ByteArray.new
+
+  for byte in bytes.iter {
+    # Escape double quotes by doubling them
+    if byte == 34 {
+      result.push(34)
+      result.push(34)
+    } else if byte == 40 or byte == 41 { # ( )
+      # Replace parentheses with spaces to avoid FTS5 syntax errors
+      result.push(32)
+    } else if byte < 32 or byte == 127 {
+      # Control characters - just remove them
+    } else {
+      result.push(byte)
+    }
+  }
+
+  result.into_string
+}
+
+fn pub escape_json(s: String) -> String {
+  let hex_chars = '0123456789abcdef'.to_byte_array
+  let bytes = s.to_byte_array
+  let mut result = ByteArray.new
+
+  for byte in bytes.iter {
+    if byte == 34 {
+      result.push(92)
+      result.push(34)
+    } else if byte == 92 {
+      result.push(92)
+      result.push(92)
+    } else if byte == 10 {
+      result.push(92)
+      result.push(110)
+    } else if byte == 13 {
+      result.push(92)
+      result.push(114)
+    } else if byte == 9 {
+      result.push(92)
+      result.push(116)
+    } else if byte == 8 {
+      result.push(92)
+      result.push(98)
+    } else if byte == 12 {
+      result.push(92)
+      result.push(102)
+    } else if byte < 32 {
+      result.push(92) # \
+      result.push(117) # u
+      result.push(48) # 0
+      result.push(48) # 0
+      let hi = (byte >> 4) & 15
+      let lo = byte & 15
+
+      match hex_chars.get(hi) {
+        case Ok(h) -> result.push(h)
+        case Error(_) -> result.push(48)
+      }
+
+      match hex_chars.get(lo) {
+        case Ok(l) -> result.push(l)
+        case Error(_) -> result.push(48)
+      }
+    } else {
+      result.push(byte)
+    }
+  }
+
+  result.into_string
+}

@@ -1,0 +1,197 @@
+import recalldory.db (Statement)
+import std.json (Json)
+import std.map (Map)
+import std.stdio (Stdout)
+
+type pub Memory {
+  let pub @id: Int
+  let pub @content: String
+  let pub @content_hash: String
+  let pub @summary: String
+  let pub @tags: String
+  let pub @scope: String
+  let pub @status: String
+  let pub @xflag: Bool
+  let pub @strength: Float64
+  let pub @access_count: Int
+  let pub @decay_rate: Float64
+  let pub @helpful_count: Int
+  let pub @harmful_count: Int
+  let pub @created_at: String
+  let pub @updated_at: String
+  let pub @last_accessed: String
+  let pub @similarity: Float64
+  let pub @parent_id: Option[Int]
+  let pub @contradicts_id: Option[Int]
+  let pub @storage_strength: Float64
+  let pub @retrieval_strength: Float64
+  let pub @is_contradiction: Bool
+}
+
+impl Memory {
+  # Core constructor: reads the standard 18 columns (0-17) plus optional extras
+  fn pub static build(
+    stmt: ref Statement,
+    similarity: Float64,
+    parent_id: Option[Int],
+    contradicts_id: Option[Int],
+    is_contradiction: Bool,
+  ) -> Memory {
+    Memory(
+      id: stmt.column_int(0),
+      content: stmt.column_text(1),
+      content_hash: stmt.column_text(2),
+      summary: match stmt.column_text_nullable(3) {
+        case Some(s) -> s
+        case None -> ''
+      },
+      tags: stmt.column_text(4),
+      scope: stmt.column_text(5),
+      status: stmt.column_text(6),
+      xflag: stmt.column_int(7) == 1,
+      strength: stmt.column_double(8),
+      access_count: stmt.column_int(9),
+      decay_rate: stmt.column_double(10),
+      helpful_count: stmt.column_int(11),
+      harmful_count: stmt.column_int(12),
+      created_at: stmt.column_text(13),
+      updated_at: stmt.column_text(14),
+      last_accessed: stmt.column_text(15),
+      similarity: similarity,
+      parent_id: parent_id,
+      contradicts_id: contradicts_id,
+      storage_strength: stmt.column_double(16),
+      retrieval_strength: stmt.column_double(17),
+      is_contradiction: is_contradiction,
+    )
+  }
+
+  fn pub static from_row(stmt: ref Statement) -> Memory {
+    build(stmt, 0.0 as Float64, Option.None, Option.None, false)
+  }
+
+  fn pub static from_row_with_score(stmt: ref Statement) -> Memory {
+    build(stmt, stmt.column_double(18), Option.None, Option.None, false)
+  }
+
+  fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
+    let parent = stmt.column_int(18)
+    let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
+
+    build(stmt, 0.0 as Float64, pid, Option.None, false)
+  }
+
+  fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
+    let contradicts = stmt.column_int(18)
+    let cid = if contradicts > 0 {
+      Option.Some(contradicts)
+    } else {
+      Option.None
+    }
+
+    build(stmt, 0.0 as Float64, Option.None, cid, true)
+  }
+}
+
+type pub AddResult {
+  let pub @id: Int
+  let pub @deduplicated: Bool
+  let pub @contradiction: Bool
+  let pub @contradicts_id: Option[Int]
+  let pub @contradicts_count: Int
+}
+
+type pub MaintainStats {
+  let pub @decayed: Int
+  let pub @anti_patterns: Int
+  let pub @pruned: Int
+}
+
+type pub MemoryStats {
+  let pub @total: Int
+  let pub @active: Int
+  let pub @pinned: Int
+  let pub @anti_pattern: Int
+  let pub @avg_strength: Float64
+}
+
+type pub ImportResult {
+  let pub @imported: Int
+  let pub @failed: Int
+  let pub @first_error: String
+}
+
+fn pub output_memories(memories: Array[Memory], out: Stdout) {
+  let mut results: Array[Json] = []
+
+  for memory in memories.iter {
+    let score = if (memory.similarity as Float) > 0.0 {
+      memory.similarity
+    } else {
+      memory.strength
+    }
+    let mut obj: Map[String, Json] = Map.new
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('summary', Json.String(memory.content))
+    obj.set('score', Json.Float(score as Float))
+    obj.set('tags', Json.String(memory.tags))
+    obj.set('status', Json.String(memory.status))
+    obj.set('negative_flag', Json.Bool(memory.xflag))
+    results.push(Json.Object(obj))
+  }
+
+  let mut root: Map[String, Json] = Map.new
+
+  root.set('results', Json.Array(results))
+  out.print(Json.Object(root).to_string)
+}
+
+fn pub output_history(memories: Array[Memory], out: Stdout) {
+  let mut versions: Array[Json] = []
+
+  for memory in memories.iter {
+    let mut obj: Map[String, Json] = Map.new
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('content', Json.String(memory.content))
+    obj.set('status', Json.String(memory.status))
+
+    match memory.parent_id {
+      case Some(pid) -> obj.set('parent_id', Json.Int(pid))
+      case None -> obj.set('parent_id', Json.Null)
+    }
+
+    obj.set('created_at', Json.String(memory.created_at))
+    versions.push(Json.Object(obj))
+  }
+
+  let mut root: Map[String, Json] = Map.new
+
+  root.set('versions', Json.Array(versions))
+  out.print(Json.Object(root).to_string)
+}
+
+fn pub output_contradictions(memories: Array[Memory], out: Stdout) {
+  let mut items: Array[Json] = []
+
+  for memory in memories.iter {
+    let mut obj: Map[String, Json] = Map.new
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('content', Json.String(memory.content))
+
+    match memory.contradicts_id {
+      case Some(cid) -> obj.set('contradicts_id', Json.Int(cid))
+      case None -> obj.set('contradicts_id', Json.Null)
+    }
+
+    obj.set('created_at', Json.String(memory.created_at))
+    items.push(Json.Object(obj))
+  }
+
+  let mut root: Map[String, Json] = Map.new
+
+  root.set('contradictions', Json.Array(items))
+  out.print(Json.Object(root).to_string)
+}

@@ -1,0 +1,151 @@
+import std.bytes (ByteArray)
+import std.crypto.sha2 (Sha256)
+import std.string (StringBuffer)
+
+fn pub sha256_hash(content: String) -> String {
+  let bytes = content.to_byte_array
+  let mut hash = Sha256.new
+
+  hash.write(bytes)
+  hash.finish.to_string
+}
+
+fn pub simhash(content: String) -> String {
+  let bytes = content.to_byte_array
+  let size = bytes.size
+
+  if size < 3 {
+    # Too short for 3-gram shingling; use SHA256 truncated to 32 bits
+    return simhash_substr(sha256_hash(content), 0, 8)
+  }
+
+  # Collect all shingle hashes first
+  let mut hashes: Array[Int] = []
+  let mut i = 0
+
+  while i + 2 < size {
+    let b0 = match bytes.get(i) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
+    let b1 = match bytes.get(i + 1) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
+    let b2 = match bytes.get(i + 2) {
+      case Ok(b) -> b
+      case Error(_) -> 0
+    }
+
+    # Hash this shingle using FNV-1a (32-bit, wrapping)
+    let mut h = 2166136261
+
+    h = (h ^ b0).wrapping_mul(16777619)
+    h = (h ^ b1).wrapping_mul(16777619)
+    h = (h ^ b2).wrapping_mul(16777619)
+    hashes.push(h)
+
+    i = i + 1
+  }
+
+  # For each bit position, count votes across all shingle hashes
+  let mut result = 0
+  let mut bit = 0
+
+  while bit < 32 {
+    let mut count = 0
+
+    for h in hashes.iter {
+      if (h >> bit) & 1 == 1 { count = count + 1 } else { count = count - 1 }
+    }
+
+    if count > 0 { result = result | (1 << bit) }
+
+    bit = bit + 1
+  }
+
+  int_to_hex(result)
+}
+
+fn pub int_to_hex(val: Int) -> String {
+  let hex_chars = '0123456789abcdef'.to_byte_array
+  let mut result = StringBuffer.new
+
+  # Handle 8 hex digits (32 bits)
+  let mut shift = 28
+  let v = val & 0xFFFFFFFF
+
+  while shift >= 0 {
+    let nibble = (v >> shift) & 15
+
+    match hex_chars.get(nibble) {
+      case Ok(byte) -> {
+        let mut single = ByteArray.new
+
+        single.push(byte)
+        result.push(single.into_string)
+      }
+      case Error(_) -> result.push('0')
+    }
+
+    shift = shift - 4
+  }
+
+  result.into_string
+}
+
+fn pub simhash_substr(hex: String, start: Int, len: Int) -> String {
+  let bytes = hex.to_byte_array
+  let mut result = ByteArray.new
+  let end = start + len
+  let mut i = start
+
+  while i < end {
+    if i >= bytes.size { break }
+
+    match bytes.get(i) {
+      case Ok(b) -> result.push(b)
+      case Error(_) -> {}
+    }
+
+    i = i + 1
+  }
+
+  result.into_string
+}
+
+fn pub hex_to_int(hex: String) -> Int {
+  let bytes = hex.to_byte_array
+  let mut result = 0
+
+  for byte in bytes.iter {
+    let nibble = if byte >= 48 and byte <= 57 {
+      byte - 48
+    } else if byte >= 97 and byte <= 102 {
+      byte - 87
+    } else if byte >= 65 and byte <= 70 {
+      byte - 55
+    } else {
+      0
+    }
+
+    result = (result << 4) + nibble
+  }
+
+  result
+}
+
+# Calculate Hamming distance between two 32-bit hash values
+fn pub hamming_distance(a: Int, b: Int) -> Int {
+  let val = (a & 0xFFFFFFFF) ^ (b & 0xFFFFFFFF)
+  let mut count = 0
+  let mut bit = 0
+
+  # Fixed 32 iterations to avoid losing bit 31 on right shift
+  while bit < 32 {
+    count = count + ((val >> bit) & 1)
+    bit = bit + 1
+  }
+
+  count
+}

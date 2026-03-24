@@ -1,8 +1,5 @@
-import recalldory (
-  count_entity_overlap, escape_json, extract_entities, hamming_distance,
-  has_negation_words, hex_to_int, int_to_hex, sanitize_fts5_query, sha256_hash,
-  simhash, simhash_substr, to_lowercase,
-)
+import hash (hamming_distance, hex_to_int, int_to_hex, sha256_hash, simhash, simhash_substr)
+import text (count_entity_overlap, escape_json, extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase)
 import std.test (Tests)
 
 fn pub tests(t: mut Tests) {
@@ -96,26 +93,18 @@ fn pub tests(t: mut Tests) {
   })
 
   t.test('hamming_distance for high-bit value vs zero', fn (t) {
-    # 0x80000000 has exactly 1 bit set; distance to 0 should be 1.
-    # Current buggy code returns 2 (adds spurious bit 32 from overflow).
     t.equal(hamming_distance(2147483648, 0), 1)
   })
 
   t.test('hamming_distance for 0xFFFFFFFF vs zero', fn (t) {
-    # 0xFFFFFFFF has 32 bits set; distance to 0 should be 32.
-    # Current buggy code returns 33.
     t.equal(hamming_distance(4294967295, 0), 32)
   })
 
   t.test('hamming_distance for 0x80000000 vs 0x7FFFFFFF', fn (t) {
-    # All 32 bits differ: should be 32.
-    # Current buggy code returns 33.
     t.equal(hamming_distance(2147483648, 2147483647), 32)
   })
 
   t.test('hamming_distance for high-bit values with positive XOR', fn (t) {
-    # 0x80000000 vs 0xC0000000: XOR = 0x40000000 (positive), 1 bit differs.
-    # This case works correctly since XOR doesn't have bit 31 set.
     t.equal(hamming_distance(2147483648, 3221225472), 1)
   })
 
@@ -176,7 +165,6 @@ fn pub tests(t: mut Tests) {
     let h1 = simhash('the quick brown fox jumps over the lazy dog')
     let h2 = simhash('the quick brown fox jumps over the lazy cat')
     let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
-    # Near-duplicates should have small Hamming distance (well under 16)
     t.true(d < 10)
   })
 
@@ -184,27 +172,25 @@ fn pub tests(t: mut Tests) {
     let h1 = simhash('programming languages and compilers')
     let h2 = simhash('chocolate cake recipe with vanilla frosting')
     let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
-    # Unrelated text should have larger Hamming distance
     t.true(d > 8)
   })
 
   # --- sanitize_fts5_query ---
 
-  t.test('sanitize_fts5_query wraps in quotes', fn (t) {
-    t.equal(sanitize_fts5_query('hello'), '"hello"')
+  t.test('sanitize_fts5_query does not wrap in quotes', fn (t) {
+    t.equal(sanitize_fts5_query('hello'), 'hello')
   })
 
   t.test('sanitize_fts5_query escapes double quotes', fn (t) {
-    t.equal(sanitize_fts5_query('say "hello"'), '"say ""hello"""')
+    t.equal(sanitize_fts5_query('say "hello"'), 'say ""hello""')
   })
 
   t.test('sanitize_fts5_query handles empty string', fn (t) {
-    t.equal(sanitize_fts5_query(''), '""')
+    t.equal(sanitize_fts5_query(''), '')
   })
 
-  t.test('sanitize_fts5_query preserves special FTS chars', fn (t) {
-    # Characters like AND, OR, NOT should be preserved inside quotes
-    t.equal(sanitize_fts5_query('test OR query'), '"test OR query"')
+  t.test('sanitize_fts5_query replaces parentheses with spaces', fn (t) {
+    t.equal(sanitize_fts5_query('test (query)'), 'test  query ')
   })
 
   # --- String.contains? ---
@@ -278,15 +264,12 @@ fn pub tests(t: mut Tests) {
   t.test('extract_entities returns words longer than 3 chars', fn (t) {
     let bytes = 'hello world from test'.to_byte_array
     let entities = extract_entities(ref bytes)
-    # "hello" (5), "world" (5), "test" (4) included; "from" (4) excluded (common word)
     t.equal(entities.size, 3)
   })
 
   t.test('extract_entities excludes common words', fn (t) {
     let bytes = 'this is very interesting'.to_byte_array
     let entities = extract_entities(ref bytes)
-    # "this" (4) excluded (common), "is" (2) excluded (too short),
-    # "very" (4) included, "interesting" (11) included
     t.equal(entities.size, 2)
   })
 
@@ -362,7 +345,6 @@ fn pub tests(t: mut Tests) {
   t.test('count_entity_overlap counts duplicates', fn (t) {
     let a = ['foo', 'foo', 'bar']
     let b = ['foo', 'baz']
-    # foo appears 2x in a but only 1x in b, so 1 overlap
     t.equal(count_entity_overlap(ref a, ref b), 1)
   })
 }

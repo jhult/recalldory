@@ -168,7 +168,7 @@ assert_contains "import count" "$out" '"imported": 2'
 
 # --- Test: no command ---
 out=$("$RECALLDORY" 2>&1 || true)
-assert_contains "no command shows error" "$out" '"error":'
+assert_contains "no command shows help" "$out" 'Usage: recalldory'
 
 # --- Summary ---
 echo ""
