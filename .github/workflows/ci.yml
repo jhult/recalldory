@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main, trunk]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inko
+        uses: inkolang/inko/.github/actions/setup@main
+
+      - name: Format check
+        run: inko fmt --check src/ test/
+
+      - name: Build
+        run: inko build
+
+      - name: Test
+        run: inko test
+
+      - name: Integration tests
+        run: bash test/integration_test.sh
