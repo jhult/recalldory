@@ -1988,7 +1988,10 @@ fn export_memories(db: mut Database) -> Result[String, String] {
     obj.set('id', Json.Int(stmt.column_int(0)))
     obj.set('content', Json.String(stmt.column_text(1)))
     obj.set('content_hash', Json.String(stmt.column_text(2)))
-    obj.set('summary', Json.String(stmt.column_text(3)))
+    obj.set('summary', match stmt.column_text_nullable(3) {
+      case Some(s) -> Json.String(s)
+      case None -> Json.Null
+    })
     obj.set('tags', Json.String(stmt.column_text(4)))
     obj.set('scope', Json.String(stmt.column_text(5)))
     obj.set('status', Json.String(stmt.column_text(6)))
@@ -2710,7 +2713,10 @@ impl Memory {
       id: stmt.column_int(0),
       content: stmt.column_text(1),
       content_hash: stmt.column_text(2),
-      summary: stmt.column_text(3),
+      summary: match stmt.column_text_nullable(3) {
+        case Some(s) -> s
+        case None -> ''
+      },
       tags: stmt.column_text(4),
       scope: stmt.column_text(5),
       status: stmt.column_text(6),
