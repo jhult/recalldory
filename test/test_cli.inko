@@ -1,107 +1,418 @@
+import recalldory.cli (
+  FlagParser, int_parse, parse_add, parse_feedback, parse_forget,
+  parse_maintain, parse_recall, parse_update, validate_scope,
+  validate_status, validate_feedback_type, parse_list,
+)
 import std.test (Tests)
-import cli (int_parse)
 
 fn pub tests(t: mut Tests) {
-  t.test("int_parse parses single digit", fn (t) {
-    match int_parse("5") {
+  t.test('int_parse parses single digit', fn (t) {
+    match int_parse('5') {
       case Some(v) -> t.equal(v, 5)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse parses multi-digit", fn (t) {
-    match int_parse("12345") {
+  t.test('int_parse parses multi-digit', fn (t) {
+    match int_parse('12345') {
       case Some(v) -> t.equal(v, 12345)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse parses zero", fn (t) {
-    match int_parse("0") {
+  t.test('int_parse parses zero', fn (t) {
+    match int_parse('0') {
       case Some(v) -> t.equal(v, 0)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse parses negative number", fn (t) {
-    match int_parse("-42") {
+  t.test('int_parse parses negative number', fn (t) {
+    match int_parse('-42') {
       case Some(v) -> t.equal(v, -42)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse parses negative zero", fn (t) {
-    match int_parse("-0") {
+  t.test('int_parse parses negative zero', fn (t) {
+    match int_parse('-0') {
       case Some(v) -> t.equal(v, 0)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse returns None for empty string", fn (t) {
-    match int_parse("") {
+  t.test('int_parse returns None for empty string', fn (t) {
+    match int_parse('') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for letters", fn (t) {
-    match int_parse("abc") {
+  t.test('int_parse returns None for letters', fn (t) {
+    match int_parse('abc') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for mixed alphanum", fn (t) {
-    match int_parse("12abc") {
+  t.test('int_parse returns None for mixed alphanum', fn (t) {
+    match int_parse('12abc') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for lone minus", fn (t) {
-    match int_parse("-") {
+  t.test('int_parse returns None for lone minus', fn (t) {
+    match int_parse('-') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for leading plus", fn (t) {
-    match int_parse("+5") {
+  t.test('int_parse returns None for leading plus', fn (t) {
+    match int_parse('+5') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for whitespace", fn (t) {
-    match int_parse(" ") {
+  t.test('int_parse returns None for whitespace', fn (t) {
+    match int_parse(' ') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for decimal", fn (t) {
-    match int_parse("3.14") {
+  t.test('int_parse returns None for decimal', fn (t) {
+    match int_parse('3.14') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse parses large number", fn (t) {
-    match int_parse("999999999") {
+  t.test('int_parse parses large number', fn (t) {
+    match int_parse('999999999') {
       case Some(v) -> t.equal(v, 999999999)
       case None -> t.true(false)
     }
   })
 
-  t.test("int_parse returns None for overflow", fn (t) {
-    match int_parse("99999999999999999999") {
+  t.test('int_parse returns None for overflow', fn (t) {
+    match int_parse('99999999999999999999') {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }
   })
 
-  t.test("int_parse returns None for negative overflow", fn (t) {
-    match int_parse("-99999999999999999999") {
+  t.test('int_parse returns None for negative overflow', fn (t) {
+    match int_parse('-99999999999999999999') {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test('int_parse parses Int.MIN', fn (t) {
+    match int_parse('-9223372036854775808') {
+      case Some(v) -> t.equal(v, -9223372036854775808)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('int_parse parses Int.MAX', fn (t) {
+    match int_parse('9223372036854775807') {
+      case Some(v) -> t.equal(v, 9223372036854775807)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('int_parse returns None for Int.MAX + 1', fn (t) {
+    match int_parse('9223372036854775808') {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test('int_parse returns None for Int.MIN - 1', fn (t) {
+    match int_parse('-9223372036854775809') {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  # --- FlagParser ---
+
+  t.test('FlagParser string_flag returns value', fn (t) {
+    let args = ['add', 'content', '--tags', 'a,b', '--scope', 'global']
+    let parser = FlagParser.new(args, 0)
+
+    t.equal(parser.string_flag('--tags'), 'a,b')
+    t.equal(parser.string_flag('--scope'), 'global')
+  })
+
+  t.test('FlagParser string_flag returns empty for missing flag', fn (t) {
+    let args = ['add', 'content']
+    let parser = FlagParser.new(args, 0)
+
+    t.equal(parser.string_flag('--tags'), '')
+  })
+
+  t.test('FlagParser bool_flag detects presence', fn (t) {
+    let args = ['add', 'content', '--pin']
+    let parser = FlagParser.new(args, 0)
+
+    t.equal(parser.bool_flag('--pin'), true)
+    t.equal(parser.bool_flag('--dry-run'), false)
+  })
+
+  t.test('FlagParser int_flag parses integer', fn (t) {
+    let args = ['recall', 'query', '--top', '5']
+    let parser = FlagParser.new(args, 0)
+
+    match parser.int_flag('--top') {
+      case Some(v) -> t.equal(v, 5)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('FlagParser int_flag returns None for missing flag', fn (t) {
+    let args = ['recall', 'query']
+    let parser = FlagParser.new(args, 0)
+
+    match parser.int_flag('--top') {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test('FlagParser positional returns first non-flag arg', fn (t) {
+    let args = ['add', 'my content here']
+    let parser = FlagParser.new(args, 1)
+
+    t.equal(parser.positional, 'my content here')
+  })
+
+  t.test('FlagParser positional skips flags', fn (t) {
+    let args = ['--pin', 'content']
+    let parser = FlagParser.new(args, 0)
+
+    t.equal(parser.positional, '')
+  })
+
+  # --- validate_scope ---
+
+  t.test('validate_scope accepts project', fn (t) {
+    t.equal(validate_scope('project'), true)
+  })
+
+  t.test('validate_scope accepts global', fn (t) {
+    t.equal(validate_scope('global'), true)
+  })
+
+  t.test('validate_scope accepts user', fn (t) {
+    t.equal(validate_scope('user'), true)
+  })
+
+  t.test('validate_scope rejects invalid scope', fn (t) {
+    t.equal(validate_scope('foo'), false)
+    t.equal(validate_scope(''), false)
+    t.equal(validate_scope('PROJECT'), false)
+  })
+
+  # --- validate_status ---
+
+  t.test('validate_status accepts active', fn (t) {
+    t.equal(validate_status('active'), true)
+  })
+
+  t.test('validate_status accepts pinned', fn (t) {
+    t.equal(validate_status('pinned'), true)
+  })
+
+  t.test('validate_status accepts superseded', fn (t) {
+    t.equal(validate_status('superseded'), true)
+  })
+
+  t.test('validate_status accepts anti-pattern', fn (t) {
+    t.equal(validate_status('anti-pattern'), true)
+  })
+
+  t.test('validate_status rejects invalid status', fn (t) {
+    t.equal(validate_status('foo'), false)
+    t.equal(validate_status(''), false)
+    t.equal(validate_status('ACTIVE'), false)
+  })
+
+  # --- validate_feedback_type ---
+
+  t.test('validate_feedback_type accepts helpful', fn (t) {
+    t.equal(validate_feedback_type('helpful'), true)
+  })
+
+  t.test('validate_feedback_type accepts harmful', fn (t) {
+    t.equal(validate_feedback_type('harmful'), true)
+  })
+
+  t.test('validate_feedback_type rejects invalid type', fn (t) {
+    t.equal(validate_feedback_type('foo'), false)
+    t.equal(validate_feedback_type(''), false)
+    t.equal(validate_feedback_type('HELPFUL'), false)
+  })
+
+  # --- parse_add ---
+
+  t.test('parse_add basic', fn (t) {
+    let args = ['add', 'some content']
+
+    match parse_add(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_add with all flags', fn (t) {
+    let args = [
+      'add',
+      'content',
+      '--tags',
+      't1,t2',
+      '--scope',
+      'global',
+      '--pin',
+    ]
+
+    match parse_add(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  # --- parse_recall ---
+
+  t.test('parse_recall basic', fn (t) {
+    let args = ['recall', 'search query']
+
+    match parse_recall(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_recall rejects negative top', fn (t) {
+    let args = ['recall', 'query', '--top', '-1']
+
+    match parse_recall(args) {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  t.test('parse_recall rejects zero top', fn (t) {
+    let args = ['recall', 'query', '--top', '0']
+
+    match parse_recall(args) {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  # --- parse_forget ---
+
+  t.test('parse_forget basic', fn (t) {
+    let args = ['forget', '42']
+
+    match parse_forget(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_forget rejects non-integer', fn (t) {
+    let args = ['forget', 'abc']
+
+    match parse_forget(args) {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  # --- parse_feedback ---
+
+  t.test('parse_feedback helpful', fn (t) {
+    let args = ['feedback', '1', 'helpful']
+
+    match parse_feedback(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_feedback harmful', fn (t) {
+    let args = ['feedback', '1', 'harmful']
+
+    match parse_feedback(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_feedback accepts any type (validation in feedback_memory)', fn (t) {
+    let args = ['feedback', '1', 'invalid']
+
+    match parse_feedback(args) {
+      case Some(_) -> {
+        # Validation is now handled by feedback_memory, not the parser
+        t.true(true)
+      }
+      case None -> t.true(false)
+    }
+  })
+
+  # --- parse_maintain ---
+
+  t.test('parse_maintain without dry-run', fn (t) {
+    let args = ['maintain']
+
+    match parse_maintain(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_maintain with dry-run', fn (t) {
+    let args = ['maintain', '--dry-run']
+
+    match parse_maintain(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  # --- parse_update ---
+
+  t.test('parse_update basic', fn (t) {
+    let args = ['update', '5', '--content', 'new content']
+
+    match parse_update(args) {
+      case Some(_) -> t.true(true)
+      case None -> t.true(false)
+    }
+  })
+
+  t.test('parse_update rejects non-integer id', fn (t) {
+    let args = ['update', 'abc']
+
+    match parse_update(args) {
+      case Some(_) -> t.true(false)
+      case None -> t.true(true)
+    }
+  })
+
+  # --- parse_list ---
+
+  t.test('parse_list rejects invalid status', fn (t) {
+    let args = ['list', '--status', 'invalid']
+
+    match parse_list(args) {
       case Some(_) -> t.true(false)
       case None -> t.true(true)
     }

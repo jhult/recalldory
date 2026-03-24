@@ -16,6 +16,90 @@ fn validate_scope(scope: String) -> Bool {
   valid
 }
 
+# Helper for parsing flag arguments from a command's argument list.
+type FlagParser {
+  let @args: Array[String]
+  let @start: Int
+
+  fn pub static new(args: Array[String], start: Int) -> FlagParser {
+    FlagParser(args: args, start: start)
+  }
+
+  fn pub string_flag(name: String) -> String {
+    let mut i = @start
+
+    while i < @args.size {
+      match @args.get(i) {
+        case Ok(arg) -> {
+          if arg == name {
+            if i + 1 < @args.size {
+              match @args.get(i + 1) {
+                case Ok(v) -> return v
+                case Error(_) -> return ''
+              }
+            }
+
+            return ''
+          }
+        }
+        case Error(_) -> {}
+      }
+
+      i = i + 1
+    }
+
+    ''
+  }
+
+  fn pub bool_flag(name: String) -> Bool {
+    let mut i = @start
+
+    while i < @args.size {
+      match @args.get(i) {
+        case Ok(arg) -> {
+          if arg == name { return true }
+        }
+        case Error(_) -> {}
+      }
+
+      i = i + 1
+    }
+
+    false
+  }
+
+  fn pub int_flag(name: String) -> Option[Int] {
+    let val = string_flag(name)
+
+    match int_parse(val) {
+      case Some(v) -> Option.Some(v)
+      case None -> Option.None
+    }
+  }
+
+  fn pub positional -> String {
+    match @args.get(@start) {
+      case Ok(arg) -> {
+        let bytes = arg.to_byte_array
+
+        match bytes.get(0) {
+          case Ok(45) -> ''
+          case _ -> arg
+        }
+      }
+      case Error(_) -> ''
+    }
+  }
+}
+
+# Parse a required integer argument at the given position.
+fn parse_int_arg(args: ref Array[String], pos: Int) -> Option[Int] {
+  match args.get(pos) {
+    case Ok(s) -> int_parse(s)
+    case Error(_) -> Option.None
+  }
+}
+
 # Commands that require a database connection
 type pub enum DbCommand {
   case Add(String, String, String, Bool)
@@ -59,7 +143,6 @@ fn pub parse_args -> Option[ParsedArgs] {
   let raw_args = env.arguments
   let mut global = false
   let mut args: Array[String] = []
-
   let mut i = 0
 
   while i < raw_args.size {
@@ -120,46 +203,16 @@ fn parse_add(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  let mut tags = ''
-  let mut scope = 'project'
-  let mut pin = false
+  let parser = FlagParser.new(args, 2)
+  let tags = parser.string_flag('--tags')
+  let scope = parser.string_flag('--scope')
+  let pin = parser.bool_flag('--pin')
 
-  let mut i = 2
+  if scope != '' and !validate_scope(scope) { return Option.None }
 
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--tags' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(t) -> {
-              tags = t
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--scope' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(s) -> {
-              scope = s
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--pin' {
-          pin = true
-          i = i + 1
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
-    }
-  }
+  let final_scope = if scope != '' { scope } else { 'project' }
 
-  # Validate scope
-  if !validate_scope(scope) { return Option.None }
-
-  Option.Some(Command.Db(DbCommand.Add(content, tags, scope, pin)))
+  Option.Some(Command.Db(DbCommand.Add(content, tags, final_scope, pin)))
 }
 
 fn parse_recall(args: Array[String]) -> Option[Command] {
@@ -170,98 +223,36 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
     case Error(_) -> return Option.None
   }
 
-  let mut scope = ''
-  let mut top = 10
+  let parser = FlagParser.new(args, 2)
+  let scope = parser.string_flag('--scope')
 
-  let mut i = 2
-
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--scope' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(s) -> {
-              scope = s
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--top' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(t) -> {
-              match int_parse(t) {
-                case Some(v) -> top = v
-                case None -> {}
-              }
-
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
+  let top = match parser.int_flag('--top') {
+    case Some(v) -> {
+      if v < 1 { return Option.None }
+      v
     }
+    case None -> 10
   }
 
-  if scope != '' {
-    if !validate_scope(scope) { return Option.None }
-  }
+  if scope != '' and !validate_scope(scope) { return Option.None }
 
   Option.Some(Command.Db(DbCommand.Recall(query, scope, top)))
 }
 
 fn parse_list(args: Array[String]) -> Option[Command] {
-  let mut scope = ''
-  let mut status = ''
-  let mut limit = 50
+  let parser = FlagParser.new(args, 1)
+  let scope = parser.string_flag('--scope')
+  let status = parser.string_flag('--status')
 
-  let mut i = 1
-
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--scope' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(s) -> {
-              scope = s
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--status' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(s) -> {
-              status = s
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--limit' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(l) -> {
-              match int_parse(l) {
-                case Some(v) -> limit = v
-                case None -> {}
-              }
-
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
+  let limit = match parser.int_flag('--limit') {
+    case Some(v) -> {
+      if v < 1 { return Option.None }
+      v
     }
+    case None -> 50
   }
 
-  if scope != '' {
-    if !validate_scope(scope) { return Option.None }
-  }
+  if scope != '' and !validate_scope(scope) { return Option.None }
 
   if status != '' and !validate_status(status) { return Option.None }
 
@@ -269,58 +260,32 @@ fn parse_list(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_forget(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
-
-  match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Db(DbCommand.Forget(id)))
-        case None -> Option.None
-      }
-    }
-    case Error(_) -> Option.None
+  match parse_int_arg(ref args, 1) {
+    case Some(id) -> Option.Some(Command.Db(DbCommand.Forget(id)))
+    case None -> Option.None
   }
 }
 
 fn parse_pin(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
-
-  match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Db(DbCommand.Pin(id)))
-        case None -> Option.None
-      }
-    }
-    case Error(_) -> Option.None
+  match parse_int_arg(ref args, 1) {
+    case Some(id) -> Option.Some(Command.Db(DbCommand.Pin(id)))
+    case None -> Option.None
   }
 }
 
 fn parse_unpin(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
-
-  match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Db(DbCommand.Unpin(id)))
-        case None -> Option.None
-      }
-    }
-    case Error(_) -> Option.None
+  match parse_int_arg(ref args, 1) {
+    case Some(id) -> Option.Some(Command.Db(DbCommand.Unpin(id)))
+    case None -> Option.None
   }
 }
 
 fn parse_feedback(args: Array[String]) -> Option[Command] {
   if args.size < 3 { return Option.None }
 
-  let id = match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(i) -> i
-        case None -> return Option.None
-      }
-    }
-    case Error(_) -> return Option.None
+  let id = match parse_int_arg(args, 1) {
+    case Some(i) -> i
+    case None -> return Option.None
   }
 
   let feedback_type = match args.get(2) {
@@ -334,47 +299,19 @@ fn parse_feedback(args: Array[String]) -> Option[Command] {
 }
 
 fn parse_maintain(args: Array[String]) -> Option[Command] {
-  let mut dry_run = false
-
-  let mut i = 1
-
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> if arg == '--dry-run' { dry_run = true }
-      case Error(_) -> {}
-    }
-
-    i = i + 1
-  }
+  let parser = FlagParser.new(args, 1)
+  let dry_run = parser.bool_flag('--dry-run')
 
   Option.Some(Command.Db(DbCommand.Maintain(dry_run)))
 }
 
 fn parse_agents_md(args: Array[String]) -> Option[Command] {
-  let mut path = '.'
+  let parser = FlagParser.new(args, 1)
+  let path = parser.string_flag('--path')
 
-  let mut i = 1
+  let final_path = if path != '' { path } else { '.' }
 
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--path' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(p) -> {
-              path = p
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
-    }
-  }
-
-  Option.Some(Command.Db(DbCommand.AgentsMd(path)))
+  Option.Some(Command.Db(DbCommand.AgentsMd(final_path)))
 }
 
 fn parse_import(args: Array[String]) -> Option[Command] {
@@ -482,125 +419,35 @@ fn int_parse(s: String) -> Option[Int] {
 fn parse_update(args: Array[String]) -> Option[Command] {
   if args.size < 2 { return Option.None }
 
-  let id = match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(i) -> i
-        case None -> return Option.None
-      }
-    }
-    case Error(_) -> return Option.None
+  let id = match parse_int_arg(args, 1) {
+    case Some(i) -> i
+    case None -> return Option.None
   }
 
-  # Support both positional content and --content flag
-  let mut content = ''
-  let mut tags = ''
-  let mut scope = ''
-  let mut positional_content = ''
+  let parser = FlagParser.new(args, 2)
+  let positional = parser.positional
+  let flag_content = parser.string_flag('--content')
+  let tags = parser.string_flag('--tags')
+  let scope = parser.string_flag('--scope')
+  let content = if flag_content != '' { flag_content } else { positional }
 
-  # Check if arg 2 is a flag or positional content
-  match args.get(2) {
-    case Ok(arg) -> {
-      if arg == '--content' or arg == '--tags' or arg == '--scope' {
-        # It's a flag, no positional content
-      } else {
-        positional_content = arg
-      }
-    }
-    case Error(_) -> {}
-  }
+  if content == '' and tags == '' and scope == '' { return Option.None }
 
-  let mut i = if positional_content != '' { 3 } else { 2 }
+  if scope != '' and !validate_scope(scope) { return Option.None }
 
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--content' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(c) -> {
-              content = c
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--tags' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(t) -> {
-              tags = t
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else if arg == '--scope' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(s) -> {
-              scope = s
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
-    }
-  }
-
-  # --content flag takes priority over positional content
-  let final_content = if content != '' { content } else { positional_content }
-
-  # Need at least content to update
-  if final_content == '' and tags == '' and scope == '' { return Option.None }
-
-  if scope != '' {
-    if !validate_scope(scope) { return Option.None }
-  }
-
-  Option.Some(Command.Db(DbCommand.Update(id, final_content, tags, scope)))
+  Option.Some(Command.Db(DbCommand.Update(id, content, tags, scope)))
 }
 
 fn parse_history(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
-
-  match args.get(1) {
-    case Ok(id_str) -> {
-      match int_parse(id_str) {
-        case Some(id) -> Option.Some(Command.Db(DbCommand.History(id)))
-        case None -> Option.None
-      }
-    }
-    case Error(_) -> Option.None
+  match parse_int_arg(ref args, 1) {
+    case Some(id) -> Option.Some(Command.Db(DbCommand.History(id)))
+    case None -> Option.None
   }
 }
 
 fn parse_contradictions(args: Array[String]) -> Option[Command] {
-  let mut resolve_id: Option[Int] = Option.None
-
-  let mut i = 1
-
-  while i < args.size {
-    match args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--resolve' and i + 1 < args.size {
-          match args.get(i + 1) {
-            case Ok(id_str) -> {
-              match int_parse(id_str) {
-                case Some(id) -> resolve_id = Option.Some(id)
-                case None -> return Option.None
-              }
-
-              i = i + 2
-            }
-            case Error(_) -> i = i + 1
-          }
-        } else {
-          i = i + 1
-        }
-      }
-      case Error(_) -> i = i + 1
-    }
-  }
+  let parser = FlagParser.new(args, 1)
+  let resolve_id = parser.int_flag('--resolve')
 
   Option.Some(Command.Db(DbCommand.Contradictions(resolve_id)))
 }

@@ -1,0 +1,813 @@
+import db (Database, init_schema, migrate_schema, to_cstr)
+import memstore (
+  add_memory, export_memories, feedback_memory, forget_memory, get_history,
+  get_stats, import_memories, list_contradictions, list_memories,
+  maintain_memory, pin_memory, rebuild_fts, resolve_contradiction,
+  search_memories, unpin_memory, update_memory,
+)
+import std.fs.file (WriteOnlyFile)
+import std.test (Tests)
+
+fn extern remove(path: Pointer[UInt8]) -> Int32
+
+fn test_db(name: String) -> Database {
+  let dir = '.recalldory'.to_path
+
+  dir.create_directory
+
+  let path = '.recalldory/${name}.db'
+
+  let _ = remove(to_cstr(path).pointer)
+  let _ = remove(to_cstr(path + '-wal').pointer)
+  let _ = remove(to_cstr(path + '-shm').pointer)
+
+  match Database.new(path) {
+    case Ok(db) -> {
+      let mut database = db
+      let _ = database.exec('PRAGMA journal_mode=WAL')
+      let _ = init_schema(database)
+      let _ = migrate_schema(database)
+
+      database
+    }
+    case Error(e) -> panic('Failed to create test db: ${e}')
+  }
+}
+
+fn pub tests(t: mut Tests) {
+  # --- add_memory ---
+
+  t.test('add_memory creates a memory and returns id', fn (t) {
+    let mut db = test_db('add_basic')
+
+    match add_memory(db, 'hello world', '', 'project', false) {
+      case Ok(result) -> {
+        t.true(result.id > 0)
+        t.false(result.deduplicated)
+        t.false(result.contradiction)
+      }
+      case Error(e) -> panic('add_memory failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('add_memory deduplicates exact content', fn (t) {
+    let mut db = test_db('add_dedup')
+
+    match add_memory(db, 'same content', '', 'project', false) {
+      case Ok(r1) -> {
+        t.true(r1.id > 0)
+        t.false(r1.deduplicated)
+
+        match add_memory(db, 'same content', '', 'project', false) {
+          case Ok(r2) -> {
+            t.equal(r2.id, r1.id)
+            t.true(r2.deduplicated)
+          }
+          case Error(e) -> panic('second add failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('first add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('add_memory with tags and scope', fn (t) {
+    let mut db = test_db('add_tags')
+
+    match add_memory(db, 'tagged memory', 'tag1,tag2', 'global', true) {
+      case Ok(result) -> {
+        t.true(result.id > 0)
+
+        match list_memories(db, '', '', 10) {
+          case Ok(mems) -> {
+            t.equal(mems.size, 1)
+
+            match mems.get(0) {
+              case Ok(m) -> {
+                t.equal(m.tags, 'tag1,tag2')
+                t.equal(m.scope, 'global')
+                t.equal(m.status, 'pinned')
+              }
+              case Error(_) -> panic('expected memory')
+            }
+          }
+          case Error(e) -> panic('list failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('add_memory rejects content exceeding 64KB', fn (t) {
+    let mut db = test_db('add_64kb')
+    let mut big = ''
+
+    let mut i = 0
+
+    while i < 65537 {
+      big = big + 'x'
+      i = i + 1
+    }
+
+    match add_memory(db, big, '', 'project', false) {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> t.true(e.contains?('64KB'))
+    }
+
+    db.close
+  })
+
+  # --- search_memories ---
+
+  t.test('search_memories finds matching content', fn (t) {
+    let mut db = test_db('search_basic')
+    let _ = add_memory(db, 'rust programming language', '', 'project', false)
+    let _ = add_memory(db, 'python web framework', '', 'project', false)
+
+    match search_memories(db, 'rust', '', 10) {
+      case Ok(mems) -> {
+        t.equal(mems.size, 1)
+
+        match mems.get(0) {
+          case Ok(m) -> t.true(m.content.contains?('rust'))
+          case Error(_) -> {}
+        }
+      }
+      case Error(e) -> panic('search failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('search_memories with empty query returns empty', fn (t) {
+    let mut db = test_db('search_empty')
+    let _ = add_memory(db, 'some content', '', 'project', false)
+
+    match search_memories(db, '', '', 10) {
+      case Ok(mems) -> t.equal(mems.size, 0)
+      case Error(_) -> t.true(false)
+    }
+
+    db.close
+  })
+
+  # --- list_memories ---
+
+  t.test('list_memories returns all active memories', fn (t) {
+    let mut db = test_db('list_all')
+    let _ = add_memory(db, 'first', '', 'project', false)
+    let _ = add_memory(db, 'second', '', 'project', false)
+
+    match list_memories(db, '', '', 50) {
+      case Ok(mems) -> t.equal(mems.size, 2)
+      case Error(e) -> panic('list failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('list_memories filters by scope', fn (t) {
+    let mut db = test_db('list_scope')
+    let _ = add_memory(db, 'global mem', '', 'global', false)
+    let _ = add_memory(db, 'project mem', '', 'project', false)
+
+    match list_memories(db, 'global', '', 50) {
+      case Ok(mems) -> {
+        t.equal(mems.size, 1)
+
+        match mems.get(0) {
+          case Ok(m) -> t.equal(m.content, 'global mem')
+          case Error(_) -> {}
+        }
+      }
+      case Error(e) -> panic('list failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- forget_memory ---
+
+  t.test('forget_memory deletes a memory', fn (t) {
+    let mut db = test_db('forget')
+
+    match add_memory(db, 'to delete', '', 'project', false) {
+      case Ok(result) -> {
+        match forget_memory(db, result.id) {
+          case Ok(deleted) -> t.true(deleted)
+          case Error(e) -> panic('forget failed: ${e}')
+        }
+
+        match list_memories(db, '', '', 50) {
+          case Ok(mems) -> t.equal(mems.size, 0)
+          case Error(_) -> {}
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- pin / unpin ---
+
+  t.test('pin and unpin a memory', fn (t) {
+    let mut db = test_db('pin_unpin')
+
+    match add_memory(db, 'pin me', '', 'project', false) {
+      case Ok(result) -> {
+        match pin_memory(db, result.id) {
+          case Ok(pinned) -> t.true(pinned)
+          case Error(e) -> panic('pin failed: ${e}')
+        }
+
+        match list_memories(db, '', 'pinned', 10) {
+          case Ok(mems) -> t.equal(mems.size, 1)
+          case Error(e) -> panic('list pinned failed: ${e}')
+        }
+
+        match unpin_memory(db, result.id) {
+          case Ok(unpinned) -> t.true(unpinned)
+          case Error(e) -> panic('unpin failed: ${e}')
+        }
+
+        match list_memories(db, '', 'pinned', 10) {
+          case Ok(mems) -> t.equal(mems.size, 0)
+          case Error(_) -> {}
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- feedback ---
+
+  t.test('feedback increments helpful count', fn (t) {
+    let mut db = test_db('feedback_helpful')
+
+    match add_memory(db, 'helpful mem', '', 'project', false) {
+      case Ok(result) -> {
+        let _ = feedback_memory(db, result.id, 'helpful')
+
+        match search_memories(db, 'helpful mem', '', 10) {
+          case Ok(mems) -> {
+            t.equal(mems.size, 1)
+
+            match mems.get(0) {
+              case Ok(m) -> t.equal(m.helpful_count, 1)
+              case Error(_) -> {}
+            }
+          }
+          case Error(e) -> panic('search failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('feedback helpful boosts retrieval strength', fn (t) {
+    let mut db = test_db('feedback_retrieval_boost')
+
+    match add_memory(db, 'boost test', '', 'project', false) {
+      case Ok(result) -> {
+        # Lower initial retrieval strength (default is 1.0, capped at 1.0)
+        let _ = db.exec('UPDATE memories SET retrieval_strength = 0.5 WHERE id = ${result.id}')
+
+        let mut stmt = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+          case Ok(s) -> s
+          case Error(e) -> panic('prepare failed: ${e}')
+        }
+        let _ = stmt.bind_int(1, result.id)
+        let _ = stmt.step
+        let initial_strength = stmt.column_double(0)
+        stmt.finalize
+
+        let _ = feedback_memory(db, result.id, 'helpful')
+
+        # Check retrieval strength increased
+        let mut stmt2 = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+          case Ok(s) -> s
+          case Error(e) -> panic('prepare failed: ${e}')
+        }
+        let _ = stmt2.bind_int(1, result.id)
+        let _ = stmt2.step
+        let new_strength = stmt2.column_double(0)
+        stmt2.finalize
+
+        t.true((new_strength as Float) > (initial_strength as Float))
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('feedback harmful reduces retrieval strength', fn (t) {
+    let mut db = test_db('feedback_retrieval_reduce')
+
+    match add_memory(db, 'reduce test', '', 'project', false) {
+      case Ok(result) -> {
+        # Set high initial retrieval strength
+        let _ = db.exec('UPDATE memories SET retrieval_strength = 0.8 WHERE id = ${result.id}')
+
+        let mut stmt = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+          case Ok(s) -> s
+          case Error(e) -> panic('prepare failed: ${e}')
+        }
+        let _ = stmt.bind_int(1, result.id)
+        let _ = stmt.step
+        let initial_strength = stmt.column_double(0)
+        stmt.finalize
+
+        let _ = feedback_memory(db, result.id, 'harmful')
+
+        # Check retrieval strength decreased
+        let mut stmt2 = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+          case Ok(s) -> s
+          case Error(e) -> panic('prepare failed: ${e}')
+        }
+        let _ = stmt2.bind_int(1, result.id)
+        let _ = stmt2.step
+        let new_strength = stmt2.column_double(0)
+        stmt2.finalize
+
+        t.true((new_strength as Float) < (initial_strength as Float))
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('feedback rejects invalid type', fn (t) {
+    let mut db = test_db('feedback_invalid')
+
+    match add_memory(db, 'test', '', 'project', false) {
+      case Ok(result) -> {
+        match feedback_memory(db, result.id, 'invalid') {
+          case Ok(_) -> t.true(false)
+          case Error(e) -> t.true(e.contains?('Invalid'))
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- update_memory ---
+
+  t.test('update_memory creates new version', fn (t) {
+    let mut db = test_db('update_version')
+
+    match add_memory(db, 'original content', '', 'project', false) {
+      case Ok(result) -> {
+        match update_memory(db, result.id, 'updated content', '', '') {
+          case Ok(new_id) -> {
+            t.true(new_id != result.id)
+
+            match get_history(db, new_id) {
+              case Ok(hist) -> t.equal(hist.size, 2)
+              case Error(e) -> panic('history failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('update failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('update_memory returns error for nonexistent id', fn (t) {
+    let mut db = test_db('update_missing')
+
+    match update_memory(db, 9999, 'new content', '', '') {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> t.true(e.contains?('not found'))
+    }
+
+    db.close
+  })
+
+  # --- get_history ---
+
+  t.test('get_history returns version chain', fn (t) {
+    let mut db = test_db('history_chain')
+
+    match add_memory(db, 'v1', '', 'project', false) {
+      case Ok(r1) -> {
+        match update_memory(db, r1.id, 'v2', '', '') {
+          case Ok(r2) -> {
+            match update_memory(db, r2, 'v3', '', '') {
+              case Ok(r3) -> {
+                match get_history(db, r3) {
+                  case Ok(hist) -> t.equal(hist.size, 3)
+                  case Error(e) -> panic('history failed: ${e}')
+                }
+              }
+              case Error(e) -> panic('update v2 failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('update v1 failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('get_history returns error for nonexistent id', fn (t) {
+    let mut db = test_db('history_missing')
+
+    match get_history(db, 9999) {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> t.true(e.contains?('not found'))
+    }
+
+    db.close
+  })
+
+  # --- get_stats ---
+
+  t.test('get_stats returns correct counts', fn (t) {
+    let mut db = test_db('stats')
+    let _ = add_memory(db, 'mem1', '', 'project', false)
+    let _ = add_memory(db, 'mem2', '', 'project', false)
+    let _ = add_memory(db, 'mem3', '', 'project', true)
+
+    match get_stats(db) {
+      case Ok(stats) -> {
+        t.equal(stats.total, 3)
+        t.equal(stats.active, 2)
+        t.equal(stats.pinned, 1)
+      }
+      case Error(e) -> panic('stats failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- maintain_memory ---
+
+  t.test('maintain_memory dry-run returns preview', fn (t) {
+    let mut db = test_db('maintain_dry')
+    let _ = add_memory(db, 'mem1', '', 'project', false)
+
+    match maintain_memory(db, true) {
+      case Ok(stats) -> {
+        t.true(stats.decayed >= 0)
+        t.true(stats.anti_patterns >= 0)
+        t.true(stats.pruned >= 0)
+      }
+      case Error(e) -> panic('maintain failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- export_memories / import_memories ---
+
+  t.test('export and import round-trip', fn (t) {
+    let mut db = test_db('export_import')
+    let _ = add_memory(db, 'exported memory', 'test', 'project', false)
+
+    let json = match export_memories(db) {
+      case Ok(j) -> j
+      case Error(e) -> panic('export failed: ${e}')
+    }
+
+    db.close
+
+    let mut db2 = test_db('export_import_target')
+
+    let tmp = '.recalldory/test_export.json'.to_path
+
+    match WriteOnlyFile.new(tmp) {
+      case Ok(f) -> {
+        let mut file = f
+        let _ = file.write(json.to_byte_array)
+        let _ = file.flush
+      }
+      case Error(e) -> panic('write export failed: ${e}')
+    }
+
+    match import_memories(db2, '.recalldory/test_export.json') {
+      case Ok(result) -> {
+        t.equal(result.imported, 1)
+        t.equal(result.failed, 0)
+      }
+      case Error(e) -> panic('import failed: ${e}')
+    }
+
+    match search_memories(db2, 'exported memory', '', 10) {
+      case Ok(mems) -> {
+        t.equal(mems.size, 1)
+
+        match mems.get(0) {
+          case Ok(m) -> {
+            t.equal(m.content, 'exported memory')
+            t.equal(m.tags, 'test')
+          }
+          case Error(_) -> {}
+        }
+      }
+      case Error(e) -> panic('search failed: ${e}')
+    }
+
+    db2.close
+  })
+
+  t.test('import rejects nonexistent file', fn (t) {
+    let mut db = test_db('import_missing')
+
+    match import_memories(db, '/nonexistent') {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> {
+        t.true(e.contains?('not allowed') or e.contains?('Failed to open'))
+      }
+    }
+
+    db.close
+  })
+
+  # --- contradictions ---
+
+  t.test('list_contradictions returns empty when none', fn (t) {
+    let mut db = test_db('contradictions_empty')
+    let _ = add_memory(db, 'some memory', '', 'project', false)
+
+    match list_contradictions(db) {
+      case Ok(contras) -> t.equal(contras.size, 0)
+      case Error(e) -> panic('list contradictions failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- rebuild_fts ---
+
+  t.test('rebuild_fts returns count', fn (t) {
+    let mut db = test_db('rebuild_fts')
+    let _ = add_memory(db, 'searchable', '', 'project', false)
+
+    match rebuild_fts(db) {
+      case Ok(count) -> t.equal(count, 1)
+      case Error(e) -> panic('rebuild failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- list_memories excludes superseded ---
+
+  t.test('list_memories excludes superseded by default', fn (t) {
+    let mut db = test_db('superseded')
+
+    match add_memory(db, 'will be superseded', '', 'project', false) {
+      case Ok(result) -> {
+        match update_memory(db, result.id, 'updated version', '', '') {
+          case Ok(_) -> {
+            match list_memories(db, '', '', 50) {
+              case Ok(mems) -> {
+                t.equal(mems.size, 1)
+
+                match mems.get(0) {
+                  case Ok(m) -> t.equal(m.content, 'updated version')
+                  case Error(_) -> {}
+                }
+              }
+              case Error(e) -> panic('list failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('update failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- contradiction detection ---
+
+  t.test('add_memory detects contradictions', fn (t) {
+    let mut db = test_db('contradiction_detect')
+    let _ = add_memory(
+      db,
+      'When building REST APIs always validate input on the server side before processing requests',
+      '',
+      'project',
+      false,
+    )
+
+    match
+      add_memory(
+        db,
+        'Never validate input on the client side for web applications in production environments',
+        '',
+        'project',
+        false,
+      )
+    {
+      case Ok(result) -> t.equal(result.contradiction, true)
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('add_memory detects near-duplicates', fn (t) {
+    let mut db = test_db('near_dup')
+    let base = 'Remember to always run the test suite before committing changes to the repository'
+
+    match add_memory(db, base, '', 'project', false) {
+      case Ok(first) -> {
+        match
+          add_memory(
+            db,
+            'Remember to always run the test suite before committing code to the repo',
+            '',
+            'project',
+            false,
+          )
+        {
+          case Ok(second) -> {
+            t.equal(second.deduplicated, true)
+            t.equal(second.id, first.id)
+          }
+          case Error(e) -> panic('second add failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('first add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('resolve_contradiction clears flag', fn (t) {
+    let mut db = test_db('resolve_contradiction')
+    let _ = add_memory(
+      db,
+      'Always use floats for currency calculations',
+      '',
+      'project',
+      false,
+    )
+
+    match
+      add_memory(
+        db,
+        'Never use floats for currency calculations',
+        '',
+        'project',
+        false,
+      )
+    {
+      case Ok(result) -> {
+        match resolve_contradiction(db, result.id) {
+          case Ok(resolved) -> {
+            t.equal(resolved, true)
+
+            match list_contradictions(db) {
+              case Ok(contras) -> t.equal(contras.size, 0)
+              case Error(e) -> panic('list failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('resolve failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- non-dry-run maintenance ---
+
+  t.test('maintain_memory prunes weak memories', fn (t) {
+    let mut db = test_db('maintain_prune')
+
+    match add_memory(db, 'weak memory to be pruned', '', 'project', false) {
+      case Ok(result) -> {
+        let _ = db.exec(
+          'UPDATE memories SET storage_strength = 0.0, retrieval_strength = 0.0, strength = 0.01 WHERE id = ${result.id}',
+        )
+
+        match maintain_memory(db, false) {
+          case Ok(stats) -> {
+            t.true(stats.pruned >= 1)
+
+            match list_memories(db, '', '', 50) {
+              case Ok(mems) -> {
+                let mut found = false
+
+                for m in mems.iter{
+                  if m.id == result.id { found = true }
+                }
+
+                t.equal(found, false)
+              }
+              case Error(e) -> panic('list failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('maintain failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- schema migration idempotence ---
+
+  t.test('migrate_schema is idempotent', fn (t) {
+    let mut db = test_db('migrate_idempotent')
+
+    # Run migrate_schema twice - should not fail
+    match migrate_schema(db) {
+      case Ok(_) -> {}
+      case Error(e) -> panic('first migrate failed: ${e}')
+    }
+
+    match migrate_schema(db) {
+      case Ok(_) -> t.true(true)
+      case Error(e) -> panic('second migrate failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- content size boundaries ---
+
+  t.test('add_memory accepts exactly 64KB', fn (t) {
+    let mut db = test_db('add_64kb_exact')
+    let mut content = ''
+
+    # Exactly 65536 bytes (64KB)
+    let mut i = 0
+
+    while i < 65536 {
+      content = content + 'x'
+      i = i + 1
+    }
+
+    match add_memory(db, content, '', 'project', false) {
+      case Ok(result) -> t.true(result.id > 0)
+      case Error(e) -> panic('add failed for 64KB: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- security: path validation ---
+
+  t.test('import rejects path traversal attempts', fn (t) {
+    let mut db = test_db('import_traversal')
+
+    match import_memories(db, '../../../etc/passwd') {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> t.true(e.contains?('..'))
+    }
+
+    db.close
+  })
+
+  # --- FTS5 query handling ---
+
+  t.test('search handles FTS5 special characters', fn (t) {
+    let mut db = test_db('fts5_special')
+    let _ = add_memory(db, 'testing asterisk wildcard', '', 'project', false)
+    let _ = add_memory(db, 'unrelated memory', '', 'project', false)
+
+    # Prefix matching with asterisk should work (FTS5 feature)
+    match search_memories(db, 'test*', '', 10) {
+      case Ok(mems) -> {
+        t.true(mems.size >= 1)
+
+        let mut found = false
+
+        for m in mems.iter {
+          if m.content.contains?('testing') { found = true }
+        }
+
+        t.true(found)
+      }
+      case Error(e) -> panic('search failed: ${e}')
+    }
+
+    db.close
+  })
+}

@@ -126,11 +126,13 @@ assert_not_contains "export timestamp is not literal SQL" "$out" "datetime('now'
 
 # --- Test: agents-md writes file ---
 out=$("$RECALLDORY" pin 1)
-out=$("$RECALLDORY" agents-md --path "$TEST_DIR")
+AGENTS_DIR="$TEST_DIR/agents_output"
+mkdir -p "$AGENTS_DIR"
+out=$("$RECALLDORY" agents-md --path "$AGENTS_DIR")
 assert_contains "agents-md returns success" "$out" '"success": true'
-if [ -f "$TEST_DIR/AGENTS.md" ]; then
+if [ -f "$AGENTS_DIR/AGENTS.md" ]; then
   PASS=$((PASS + 1))
-  agents_content=$(cat "$TEST_DIR/AGENTS.md")
+  agents_content=$(cat "$AGENTS_DIR/AGENTS.md")
   assert_contains "AGENTS.md has header" "$agents_content" "# recalldory Memories"
   assert_contains "AGENTS.md has pinned section" "$agents_content" "## Pinned Memories"
 else

@@ -1,6 +1,12 @@
-import hash (hamming_distance, hex_to_int, int_to_hex, sha256_hash, simhash, simhash_substr)
-import text (count_entity_overlap, escape_json, extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase)
+import recalldory.hash (
+  hamming_distance, hex_to_int, int_to_hex, sha256_hash, simhash,
+  simhash_substr,
+)
 import std.test (Tests)
+import recalldory.text (
+  count_entity_overlap, escape_json, extract_entities, has_negation_words,
+  sanitize_fts5_query, to_lowercase,
+)
 
 fn pub tests(t: mut Tests) {
   # --- sha256_hash ---
@@ -165,6 +171,7 @@ fn pub tests(t: mut Tests) {
     let h1 = simhash('the quick brown fox jumps over the lazy dog')
     let h2 = simhash('the quick brown fox jumps over the lazy cat')
     let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
+
     t.true(d < 10)
   })
 
@@ -172,6 +179,7 @@ fn pub tests(t: mut Tests) {
     let h1 = simhash('programming languages and compilers')
     let h2 = simhash('chocolate cake recipe with vanilla frosting')
     let d = hamming_distance(hex_to_int(h1), hex_to_int(h2))
+
     t.true(d > 8)
   })
 
@@ -264,12 +272,14 @@ fn pub tests(t: mut Tests) {
   t.test('extract_entities returns words longer than 3 chars', fn (t) {
     let bytes = 'hello world from test'.to_byte_array
     let entities = extract_entities(ref bytes)
+
     t.equal(entities.size, 3)
   })
 
   t.test('extract_entities excludes common words', fn (t) {
     let bytes = 'this is very interesting'.to_byte_array
     let entities = extract_entities(ref bytes)
+
     t.equal(entities.size, 2)
   })
 
@@ -345,6 +355,7 @@ fn pub tests(t: mut Tests) {
   t.test('count_entity_overlap counts duplicates', fn (t) {
     let a = ['foo', 'foo', 'bar']
     let b = ['foo', 'baz']
+
     t.equal(count_entity_overlap(ref a, ref b), 1)
   })
 }

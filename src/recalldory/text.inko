@@ -1,4 +1,5 @@
 import std.bytes (ByteArray)
+import std.map (Map)
 
 # Common words to ignore for entity extraction
 let pub COMMON_WORDS = [
@@ -159,23 +160,17 @@ fn pub count_entity_overlap(
   entities2: ref Array[String],
 ) -> Int {
   let mut count = 0
-  let mut matched: Array[String] = []
+  let mut matched: Map[String, Bool] = Map.new
 
   for e1 in entities1.iter {
     for e2 in entities2.iter {
       if e1 == e2 {
-        let mut already = false
-
-        for m in matched.iter {
-          if m == e2 {
-            already = true
-            break
+        match matched.get(e2) {
+          case Ok(_) -> {} # already counted
+          case Error(_) -> {
+            matched.set(e2, true)
+            count = count + 1
           }
-        }
-
-        if !already {
-          count = count + 1
-          matched.push(e2)
         }
 
         break
@@ -248,6 +243,7 @@ fn pub escape_json(s: String) -> String {
       result.push(117) # u
       result.push(48) # 0
       result.push(48) # 0
+
       let hi = (byte >> 4) & 15
       let lo = byte & 15
 

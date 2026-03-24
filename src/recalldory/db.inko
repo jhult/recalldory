@@ -4,6 +4,7 @@ import extern "sqlite3"
 let pub SQLITE_OK = 0
 let pub SQLITE_ROW = 100
 let pub SQLITE_DONE = 101
+let pub SQLITE_NULL = 5
 let pub SQLITE_TRANSIENT = -1
 
 type pub Database {
@@ -285,10 +286,24 @@ impl Statement {
     sqlite3_column_count(@handle) as Int
   }
 
+  fn pub column_type(col: Int) -> Int {
+    sqlite3_column_type(@handle, col as Int32) as Int
+  }
+
   fn pub column_text(col: Int) -> String {
     let ptr = sqlite3_column_text(@handle, col as Int32)
 
     pointer_to_string(ptr)
+  }
+
+  fn pub column_text_nullable(col: Int) -> Option[String] {
+    if sqlite3_column_type(@handle, col as Int32) as Int == SQLITE_NULL {
+      return Option.None
+    }
+
+    let ptr = sqlite3_column_text(@handle, col as Int32)
+
+    Option.Some(pointer_to_string(ptr))
   }
 
   fn pub column_int(col: Int) -> Int {
