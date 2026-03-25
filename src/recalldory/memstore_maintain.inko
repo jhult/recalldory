@@ -24,11 +24,11 @@ fn pub maintain_memory(
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
         let _ = exec_sql(db, 'ROLLBACK')
 
-        Result.Ok(v)
+        return Result.Ok(v)
       }
       case Error(e) -> {
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
-        Result.Error(rollback_or_error(db, e))
+        return Result.Error(rollback_or_error(db, e))
       }
     }
   }
