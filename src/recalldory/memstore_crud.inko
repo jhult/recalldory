@@ -116,7 +116,10 @@ fn check_near_duplicate(
 
     if step_result == SQLITE_DONE { break }
 
-    if step_result != SQLITE_ROW { break }
+    if step_result != SQLITE_ROW {
+      stmt.finalize
+      return Result.Error('Near-duplicate search query failed')
+    }
 
     let existing_simhash_str = stmt.column_text(2)
 

@@ -101,9 +101,14 @@ fn pub exec_with_int(
     case Ok(_) -> {}
   }
 
-  let _ = stmt.step
+  let step_result = stmt.step
 
   stmt.finalize
+
+  if step_result != SQLITE_DONE {
+    return Result.Error('Statement execution failed')
+  }
+
   Result.Ok(db.changes)
 }
 
@@ -134,9 +139,14 @@ fn pub exec_with_two_ints(
     case Ok(_) -> {}
   }
 
-  let _ = stmt.step
+  let step_result = stmt.step
 
   stmt.finalize
+
+  if step_result != SQLITE_DONE {
+    return Result.Error('Statement execution failed')
+  }
+
   Result.Ok(db.changes)
 }
 
