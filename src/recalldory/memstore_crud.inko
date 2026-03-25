@@ -984,30 +984,3 @@ fn pub get_history(db: mut Database, id: Int) -> Result[HistoryResult, String] {
 
   Result.Ok(HistoryResult(versions: history, truncated: truncated))
 }
-
-fn get_parent_id(db: mut Database, id: Int) -> Option[Int] {
-  let sql = 'SELECT parent_id FROM memories WHERE id = ?'
-  let mut stmt = match db.prepare(sql) {
-    case Ok(s) -> s
-    case Error(_) -> return Option.None
-  }
-
-  match stmt.bind_int(1, id) {
-    case Error(_) -> {
-      stmt.finalize
-      return Option.None
-    }
-    case Ok(_) -> {}
-  }
-
-  let result = if stmt.step == SQLITE_ROW {
-    let parent_id = stmt.column_int(0)
-
-    if parent_id > 0 { Option.Some(parent_id) } else { Option.None }
-  } else {
-    Option.None
-  }
-
-  stmt.finalize
-  result
-}
