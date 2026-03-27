@@ -67,7 +67,8 @@ impl Memory {
     )
   }
 
-  # Build from a statement with standard columns, no extra fields.
+  # Reads all columns immediately into Memory struct. Must be called with
+  # statement at valid row (after SQLITE_ROW). Values are copied before step().
   fn pub static from_row(stmt: ref Statement) -> Memory {
     build(stmt, 0.0 as Float64, Option.None, Option.None, false)
   }
