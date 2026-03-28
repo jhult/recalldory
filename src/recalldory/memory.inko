@@ -131,6 +131,12 @@ type pub ImportResult {
   let pub @first_error: String
 }
 
+# Result of a history query (version chain, with truncation flag).
+type pub HistoryResult {
+  let pub @versions: Array[Memory]
+  let pub @truncated: Bool
+}
+
 # Output memories as a JSON results array to stdout.
 fn pub output_memories(memories: Array[Memory], out: Stdout) {
   let mut results: Array[Json] = []
@@ -159,10 +165,10 @@ fn pub output_memories(memories: Array[Memory], out: Stdout) {
 }
 
 # Output memory version history as a JSON versions array to stdout.
-fn pub output_history(memories: Array[Memory], out: Stdout) {
+fn pub output_history(result: HistoryResult, out: Stdout) {
   let mut versions: Array[Json] = []
 
-  for memory in memories.iter {
+  for memory in result.versions.iter {
     let mut obj: Map[String, Json] = Map.new
 
     obj.set('id', Json.Int(memory.id))
@@ -181,6 +187,7 @@ fn pub output_history(memories: Array[Memory], out: Stdout) {
   let mut root: Map[String, Json] = Map.new
 
   root.set('versions', Json.Array(versions))
+  root.set('truncated', Json.Bool(result.truncated))
   out.print(Json.Object(root).to_string)
 }
 

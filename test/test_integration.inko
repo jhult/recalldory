@@ -377,7 +377,7 @@ fn pub tests(t: mut Tests) {
             t.true(new_id != result.id)
 
             match get_history(db, new_id) {
-              case Ok(hist) -> t.equal(hist.size, 2)
+              case Ok(hist) -> t.equal(hist.versions.size, 2)
               case Error(e) -> panic('history failed: ${e}')
             }
           }
@@ -413,7 +413,7 @@ fn pub tests(t: mut Tests) {
             match update_memory(db, r2, 'v3', '', '') {
               case Ok(r3) -> {
                 match get_history(db, r3) {
-                  case Ok(hist) -> t.equal(hist.size, 3)
+                  case Ok(hist) -> t.equal(hist.versions.size, 3)
                   case Error(e) -> panic('history failed: ${e}')
                 }
               }

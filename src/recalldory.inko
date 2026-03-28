@@ -1,17 +1,17 @@
-import cli (DbCommand, parse_args)
-import db (Database)
-import hooks (handle_hook_install, handle_hook_post_compact)
-import memory (output_contradictions, output_history, output_memories)
-import memstore (open_database)
-import memstore_crud (
+import recalldory.cli (DbCommand, parse_args, print_help)
+import recalldory.db (Database)
+import recalldory.hooks (handle_hook_install, handle_hook_post_compact)
+import recalldory.memory (output_contradictions, output_history, output_memories)
+import recalldory.memstore (open_database)
+import recalldory.memstore_crud (
   add_memory, feedback_memory, forget_memory, get_history, list_memories,
   pin_memory, search_memories, unpin_memory, update_memory,
 )
-import memstore_maintain (get_stats, maintain_memory, rebuild_fts)
-import memstore_contradiction (list_contradictions, resolve_contradiction)
-import memstore_import (export_memories, generate_agents_md, import_memories)
+import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
+import recalldory.memstore_contradiction (list_contradictions, resolve_contradiction)
+import recalldory.memstore_import (export_memories, generate_agents_md, import_memories)
 import std.stdio (Stdout)
-import text (escape_json)
+import recalldory.text (escape_json)
 
 # Application entry point.
 type async Main {
@@ -33,48 +33,6 @@ type async Main {
       case None -> print_help(out)
     }
   }
-}
-
-fn print_help(out: Stdout) {
-  out.print('recalldory - persistent memory for AI coding assistants\n')
-  out.print('Usage: recalldory <command> [options] [--global]\n')
-  out.print('\nCommands:')
-  out.print('  add <content> [--tags T] [--scope S] [--pin]   Add a memory')
-  out.print('  recall <query> [--scope S] [--top N]            Search memories')
-  out.print('  list [--scope S] [--status S] [--limit N]       List memories')
-  out.print('  update <id> [content] [--content C] [--tags T]  Update a memory')
-  out.print('  forget <id>                                     Delete a memory')
-  out.print('  pin <id>                                        Pin a memory')
-  out.print('  unpin <id>                                      Unpin a memory')
-  out.print('  feedback <id> <helpful|harmful>                 Give feedback')
-  out.print('  maintain [--dry-run]                            Run maintenance')
-  out.print('  stats                                           Show statistics')
-  out.print('  export                                          Export as JSON')
-  out.print(
-    '  import <file>                                   Import from JSON',
-  )
-  out.print(
-    '  history <id>                                    Show version history',
-  )
-  out.print(
-    '  contradictions [--resolve <id>]                 Manage contradictions',
-  )
-  out.print(
-    '  agents-md [--path P]                            Generate AGENTS.md',
-  )
-  out.print(
-    '  rebuild-fts                                     Rebuild FTS index',
-  )
-  out.print(
-    '  hook install                                    Install Claude hook',
-  )
-  out.print(
-    '  hook post-compact                               Post-compact hook',
-  )
-  out.print('\nGlobal flag:')
-  out.print(
-    '  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database',
-  )
 }
 
 fn run_with_db(cmd: DbCommand, global: Bool, out: Stdout) {
@@ -207,7 +165,7 @@ fn handle_command(cmd: DbCommand, db: mut Database, out: Stdout) {
     }
     case History(id) -> {
       match get_history(db, id) {
-        case Ok(mems) -> output_history(mems, out)
+        case Ok(result) -> output_history(result, out)
         case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
