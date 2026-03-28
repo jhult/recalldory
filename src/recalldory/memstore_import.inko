@@ -1,19 +1,17 @@
-import db (Database, SQLITE_DONE, SQLITE_ROW, to_cstr)
+import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW, to_cstr)
 import std.env
-import hash (sha256_hash)
-import memory (ImportResult, Memory)
-import memstore_helpers (
-  MAX_CONTENT_SIZE, MEMORY_COLUMNS, bind_int, bind_text,
+import recalldory.memory (ImportResult)
+import recalldory.memstore_helpers (
+  MEMORY_COLUMNS, STATUS_PINNED, STATUS_ANTI_PATTERN,
   exec_sql, exec_with_int, rollback_or_error,
 )
-import memstore_crud (add_memory_inner)
+import recalldory.memstore_crud (add_memory_inner)
 import std.bytes (ByteArray)
 import std.fs.file (ReadOnlyFile, WriteOnlyFile)
 import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
 import std.fs.path (Path)
-import text (to_lowercase)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
 
@@ -59,7 +57,7 @@ fn is_absolute_path(path: String) -> Bool {
 # SECURITY: Re-validates the expanded path to catch symlink escapes where
 # a symlink within an allowed directory points outside it.
 fn validate_path(path: String, allow_tmp: Bool) -> Result[Path, String] {
-  # Check for path traversal in the original path
+  # Check for path traversal in the original path (fast-fail)
   if path.contains?('..') {
     return Result.Error('Path must not contain ".."')
   }
@@ -115,7 +113,7 @@ fn pub generate_agents_md(
 
   let validated_str = validated_path.to_string
 
-  let sql = "SELECT content, tags, scope FROM memories WHERE status = 'pinned' ORDER BY created_at DESC"
+  let sql = "SELECT content, tags, scope FROM memories WHERE status = '${STATUS_PINNED}' ORDER BY created_at DESC"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -149,7 +147,7 @@ fn pub generate_agents_md(
 
   stmt.finalize
 
-  let anti_sql = "SELECT content FROM memories WHERE status = 'anti-pattern' ORDER BY harmful_count DESC LIMIT 10"
+  let anti_sql = "SELECT content FROM memories WHERE status = '${STATUS_ANTI_PATTERN}' ORDER BY harmful_count DESC LIMIT 10"
   let mut anti_stmt = match db.prepare(anti_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')

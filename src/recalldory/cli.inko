@@ -1,9 +1,13 @@
 import std.env
+import std.stdio (Stdout)
+import recalldory.memstore_helpers (
+  STATUS_ACTIVE, STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN,
+)
 
 # Valid scope values
 let VALID_SCOPES = ['project', 'global', 'user']
 
-fn validate_scope(scope: String) -> Bool {
+fn pub validate_scope(scope: String) -> Bool {
   let mut valid = false
 
   for s in VALID_SCOPES.iter {
@@ -17,9 +21,9 @@ fn validate_scope(scope: String) -> Bool {
 }
 
 # Valid status values for list command
-let VALID_STATUSES = ['active', 'pinned', 'superseded', 'anti-pattern']
+let VALID_STATUSES = [STATUS_ACTIVE, STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN]
 
-fn validate_status(status: String) -> Bool {
+fn pub validate_status(status: String) -> Bool {
   let mut valid = false
 
   for s in VALID_STATUSES.iter {
@@ -35,7 +39,7 @@ fn validate_status(status: String) -> Bool {
 # Valid feedback type values
 let VALID_FEEDBACK_TYPES = ['helpful', 'harmful']
 
-fn validate_feedback_type(feedback_type: String) -> Bool {
+fn pub validate_feedback_type(feedback_type: String) -> Bool {
   let mut valid = false
 
   for f in VALID_FEEDBACK_TYPES.iter {
@@ -49,7 +53,7 @@ fn validate_feedback_type(feedback_type: String) -> Bool {
 }
 
 # Parses flag arguments (--flag value) from a subcommand's argument slice.
-type FlagParser {
+type pub FlagParser {
   let @args: Array[String]
   let @start: Int
 
@@ -179,13 +183,20 @@ impl ParsedArgs {
 fn pub parse_args -> Option[ParsedArgs] {
   let raw_args = env.arguments
   let mut global = false
+  let mut help = false
   let mut args: Array[String] = []
   let mut i = 0
 
   while i < raw_args.size {
     match raw_args.get(i) {
       case Ok(arg) -> {
-        if arg == '--global' { global = true } else { args.push(arg.clone) }
+        if arg == '--global' {
+          global = true
+        } else if arg == '--help' or arg == '-h' {
+          help = true
+        } else {
+          args.push(arg.clone)
+        }
       }
       case Error(_) -> {}
     }
@@ -193,15 +204,13 @@ fn pub parse_args -> Option[ParsedArgs] {
     i = i + 1
   }
 
-  if args.size < 1 {
+  if help or args.size < 1 {
     return Option.Some(ParsedArgs(command: Command.Help, global: global))
   }
 
   let cmd = match args.get(0) {
     case Ok(cmd) -> {
       match cmd {
-        case '--help' -> Option.Some(Command.Help)
-        case '-h' -> Option.Some(Command.Help)
         case 'help' -> Option.Some(Command.Help)
         case 'add' -> parse_add(args)
         case 'recall' -> parse_recall(args)
@@ -232,7 +241,7 @@ fn pub parse_args -> Option[ParsedArgs] {
   }
 }
 
-fn parse_add(args: Array[String]) -> Option[Command] {
+fn pub parse_add(args: Array[String]) -> Option[Command] {
   if args.size < 2 { return Option.None }
 
   let content = match args.get(1) {
@@ -252,7 +261,7 @@ fn parse_add(args: Array[String]) -> Option[Command] {
   Option.Some(Command.Db(DbCommand.Add(content, tags, final_scope, pin)))
 }
 
-fn parse_recall(args: Array[String]) -> Option[Command] {
+fn pub parse_recall(args: Array[String]) -> Option[Command] {
   if args.size < 2 { return Option.None }
 
   let query = match args.get(1) {
@@ -276,7 +285,7 @@ fn parse_recall(args: Array[String]) -> Option[Command] {
   Option.Some(Command.Db(DbCommand.Recall(query, scope, top)))
 }
 
-fn parse_list(args: Array[String]) -> Option[Command] {
+fn pub parse_list(args: Array[String]) -> Option[Command] {
   let parser = FlagParser.new(args, 1)
   let scope = parser.string_flag('--scope')
   let status = parser.string_flag('--status')
@@ -296,7 +305,7 @@ fn parse_list(args: Array[String]) -> Option[Command] {
   Option.Some(Command.Db(DbCommand.List(scope, status, limit)))
 }
 
-fn parse_forget(args: Array[String]) -> Option[Command] {
+fn pub parse_forget(args: Array[String]) -> Option[Command] {
   match parse_int_arg(ref args, 1) {
     case Some(id) -> Option.Some(Command.Db(DbCommand.Forget(id)))
     case None -> Option.None
@@ -317,7 +326,7 @@ fn parse_unpin(args: Array[String]) -> Option[Command] {
   }
 }
 
-fn parse_feedback(args: Array[String]) -> Option[Command] {
+fn pub parse_feedback(args: Array[String]) -> Option[Command] {
   if args.size < 3 { return Option.None }
 
   let id = match parse_int_arg(args, 1) {
@@ -334,7 +343,7 @@ fn parse_feedback(args: Array[String]) -> Option[Command] {
   Option.Some(Command.Db(DbCommand.Feedback(id, feedback_type)))
 }
 
-fn parse_maintain(args: Array[String]) -> Option[Command] {
+fn pub parse_maintain(args: Array[String]) -> Option[Command] {
   let parser = FlagParser.new(args, 1)
   let dry_run = parser.bool_flag('--dry-run')
 
@@ -374,7 +383,7 @@ fn parse_hook(args: Array[String]) -> Option[Command] {
   }
 }
 
-fn int_parse(s: String) -> Option[Int] {
+fn pub int_parse(s: String) -> Option[Int] {
   let mut result: Int = 0
   let mut valid = false
   let mut negative = false
@@ -452,7 +461,7 @@ fn int_parse(s: String) -> Option[Int] {
   }
 }
 
-fn parse_update(args: Array[String]) -> Option[Command] {
+fn pub parse_update(args: Array[String]) -> Option[Command] {
   if args.size < 2 { return Option.None }
 
   let id = match parse_int_arg(args, 1) {
@@ -486,4 +495,46 @@ fn parse_contradictions(args: Array[String]) -> Option[Command] {
   let resolve_id = parser.int_flag('--resolve')
 
   Option.Some(Command.Db(DbCommand.Contradictions(resolve_id)))
+}
+
+fn pub print_help(out: Stdout) {
+  let _ = out.print('recalldory - persistent memory for AI coding assistants\n')
+  let _ = out.print('Usage: recalldory <command> [options] [--global]\n')
+  let _ = out.print('\nCommands:')
+  let _ = out.print('  add <content> [--tags T] [--scope S] [--pin]   Add a memory')
+  let _ = out.print('  recall <query> [--scope S] [--top N]            Search memories')
+  let _ = out.print('  list [--scope S] [--status S] [--limit N]       List memories')
+  let _ = out.print('  update <id> [content] [--content C] [--tags T]  Update a memory')
+  let _ = out.print('  forget <id>                                     Delete a memory')
+  let _ = out.print('  pin <id>                                        Pin a memory')
+  let _ = out.print('  unpin <id>                                      Unpin a memory')
+  let _ = out.print('  feedback <id> <helpful|harmful>                 Give feedback')
+  let _ = out.print('  maintain [--dry-run]                            Run maintenance')
+  let _ = out.print('  stats                                           Show statistics')
+  let _ = out.print('  export                                          Export as JSON')
+  let _ = out.print(
+    '  import <file>                                   Import from JSON',
+  )
+  let _ = out.print(
+    '  history <id>                                    Show version history',
+  )
+  let _ = out.print(
+    '  contradictions [--resolve <id>]                 Manage contradictions',
+  )
+  let _ = out.print(
+    '  agents-md [--path P]                            Generate AGENTS.md',
+  )
+  let _ = out.print(
+    '  rebuild-fts                                     Rebuild FTS index',
+  )
+  let _ = out.print(
+    '  hook install                                    Install Claude hook',
+  )
+  let _ = out.print(
+    '  hook post-compact                               Post-compact hook',
+  )
+  let _ = out.print('\nGlobal flag:')
+  let _ = out.print(
+    '  --global    Use global (~/.recalldory/) instead of project (.recalldory/) database',
+  )
 }

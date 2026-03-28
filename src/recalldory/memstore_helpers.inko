@@ -1,5 +1,11 @@
 import recalldory.db (Database, SQLITE_DONE, Statement)
 
+# Memory status values - use these constants instead of string literals
+let pub STATUS_ACTIVE = 'active'
+let pub STATUS_PINNED = 'pinned'
+let pub STATUS_SUPERSEDED = 'superseded'
+let pub STATUS_ANTI_PATTERN = 'anti-pattern'
+
 # Comma-separated list of all memory table columns for SELECT queries.
 let pub MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength'
 

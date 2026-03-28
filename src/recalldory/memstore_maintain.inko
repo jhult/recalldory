@@ -1,6 +1,9 @@
-import db (Database, SQLITE_DONE, SQLITE_ROW)
-import memory (MaintainStats, MemoryStats)
-import memstore_helpers (exec_sql, exec_step, rollback_or_error)
+import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW)
+import recalldory.memory (MaintainStats, MemoryStats)
+import recalldory.memstore_helpers (
+  STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN, STATUS_ACTIVE,
+  exec_sql, rollback_or_error,
+)
 
 fn pub maintain_memory(
   db: mut Database,
@@ -60,7 +63,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let mut anti_patterns = 0
   let mut pruned = 0
 
-  let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != 'pinned' AND status != 'superseded' AND retrieval_strength > 0.05"
+  let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND retrieval_strength > 0.05"
   let mut decay_stmt = match db.prepare(decay_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare decay: ${e}')
@@ -74,7 +77,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   decayed = db.changes
   decay_stmt.finalize
 
-  let anti_sql = "UPDATE memories SET status = 'anti-pattern', is_negative = 1, updated_at = datetime('now') WHERE harmful_count >= 3 AND status != 'pinned' AND status != 'anti-pattern' AND status != 'superseded'"
+  let anti_sql = "UPDATE memories SET status = '${STATUS_ANTI_PATTERN}', is_negative = 1, updated_at = datetime('now') WHERE harmful_count >= 3 AND status != '${STATUS_PINNED}' AND status != '${STATUS_ANTI_PATTERN}' AND status != '${STATUS_SUPERSEDED}'"
   let mut anti_stmt = match db.prepare(anti_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare anti-pattern: ${e}')
@@ -88,7 +91,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   anti_patterns = db.changes
   anti_stmt.finalize
 
-  let prune_sql = "DELETE FROM memories WHERE status != 'pinned' AND status != 'superseded' AND strength < 0.05"
+  let prune_sql = "DELETE FROM memories WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND strength < 0.05"
   let mut prune_stmt = match db.prepare(prune_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare prune: ${e}')
@@ -113,7 +116,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
 
 # Return aggregate memory statistics (total, active, pinned, anti-pattern, avg strength).
 fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
-  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'pinned' THEN 1 ELSE 0 END), SUM(CASE WHEN status = 'anti-pattern' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
+  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = '${STATUS_ACTIVE}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_PINNED}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_ANTI_PATTERN}' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')

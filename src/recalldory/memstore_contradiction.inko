@@ -1,7 +1,7 @@
-import db (Database, SQLITE_ROW, SQLITE_DONE)
-import memory (Memory)
-import memstore_helpers (MEMORY_COLUMNS, exec_with_int)
-import text (
+import recalldory.db (Database, SQLITE_ROW, SQLITE_DONE)
+import recalldory.memory (Memory)
+import recalldory.memstore_helpers (MEMORY_COLUMNS, STATUS_ACTIVE, exec_with_int)
+import recalldory.text (
   extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase,
   count_entity_overlap,
 )
@@ -41,7 +41,7 @@ fn pub check_contradiction(
 
   if fts_query == '' { return Result.Ok((false, [])) }
 
-  let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = 'active'"
+  let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = '${STATUS_ACTIVE}'"
   let mut stmt = match db.prepare(search_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare contradiction search: ${e}')
