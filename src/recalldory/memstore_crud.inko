@@ -493,8 +493,8 @@ fn pub search_memories(
   # Sanitize query first and check for empty input before preparing statement
   let safe_query = sanitize_fts5_query(query)
 
-  # safe_query.size == 2 means the query is just "" (empty quotes)
-  if safe_query.size == 2 {
+  # Return empty results for empty query
+  if safe_query.size == 0 {
     return Result.Ok([])
   }
 
