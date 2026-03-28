@@ -194,9 +194,11 @@ fn pub generate_agents_md(
     output = output + 'No pinned memories or anti-patterns found.\n'
   }
 
-  let file_path = '${validated_str}/AGENTS.md'.to_path
+  let file_path = '${validated_str}/AGENTS.md'
+  let tmp_path = '${file_path}.tmp'
 
-  match WriteOnlyFile.new(file_path) {
+  # Write to temp file first, then rename atomically to avoid data loss
+  match WriteOnlyFile.new(tmp_path.to_path) {
     case Ok(f) -> {
       let mut file = f
 
@@ -204,7 +206,19 @@ fn pub generate_agents_md(
         case Ok(_) -> {
           let _ = file.flush
 
-          Result.Ok(nil)
+          # Atomically rename temp file to final destination
+          let src = to_cstr(tmp_path)
+          let dst = to_cstr(file_path)
+          let rename_result = rename(src.pointer, dst.pointer)
+
+          if (rename_result as Int) == 0 {
+            Result.Ok(nil)
+          } else {
+            # Clean up temp file on failure
+            let tmp_cstr = to_cstr(tmp_path)
+            let _ = unlink(tmp_cstr.pointer)
+            Result.Error('Failed to rename temp file to AGENTS.md')
+          }
         }
         case Error(e) -> Result.Error('Failed to write AGENTS.md: ${e}')
       }
