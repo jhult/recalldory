@@ -4,37 +4,182 @@ A persistent memory system for AI coding assistants, written in [Inko](https://i
 
 Named after **Dory**, the blue tang from *Finding Nemo* known for her short-term memory loss. Irony aside, `recalldory` helps AI assistants remember context across sessions—something Dory could only dream of. Just keep swimming, just keep recalling.
 
-## Features
+## Mental Model
 
-- **Memory Storage**: Store and retrieve coding knowledge, patterns, and discoveries
-- **Full-Text Search**: FTS5-powered search with BM25 ranking
-- **Memory Decay**: Automatic strength decay for unused memories
-- **Anti-Pattern Detection**: Flag harmful patterns based on feedback
-- **Import/Export**: JSON-based backup and restore
+**You curate, recalldory persists.**
+
+Adding memories is always manual — you decide what's worth remembering. Retrieval is automatic after context compaction via hooks; otherwise manual via `recall`. This explicit curation avoids the noise of LLM-generated "important" memories.
+
+## Workflow
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant Claude
+    participant Recalldory
+    participant DB as .recalldory/memory.db
+
+    Note over You,DB: Session 1: Learning
+    You->>Claude: Work on a task
+    You->>Recalldory: add "important discovery"
+    Recalldory->>DB: Store memory
+    Claude->>Claude: Context fills up...
+    Claude->>Claude: Compact context
+    Claude->>Recalldory: hook post-compact
+    Recalldory->>DB: List recent memories
+    DB-->>Recalldory: Memories
+    Recalldory-->>Claude: Inject as context
+
+    Note over You,DB: Session 2: Recalling
+    You->>Claude: New session starts
+    Claude->>Claude: Context compacts
+    Claude->>Recalldory: hook post-compact
+    Recalldory->>DB: List recent memories
+    DB-->>Recalldory: Memories (including "important discovery")
+    Recalldory-->>Claude: Inject as context
+    Claude-->>You: Remembers previous session
+```
+
+## Installation
+
+### Pre-built binaries
+
+Download the latest release for your platform from the [Releases page](https://github.com/jhult/recalldory/releases).
+
+| Binary | Platform |
+|--------|----------|
+| `recalldory-amd64-linux-gnu` | Linux x86_64 (glibc) |
+| `recalldory-arm64-linux-gnu` | Linux ARM64 (glibc) |
+| `recalldory-amd64-linux-musl` | Linux x86_64 (musl/Alpine) |
+| `recalldory-arm64-linux-musl` | Linux ARM64 (musl/Alpine) |
+| `recalldory-amd64-mac-native` | macOS x86_64 |
+| `recalldory-arm64-mac-native` | macOS Apple Silicon |
+
+### Build from source
+
+```bash
+# Requires Inko 0.19.1
+inko build --release
+```
+
+### Setup
+
+```bash
+# Install the post-compact hook (auto-injects memories after context compaction)
+recalldory hook install
+```
 
 ## Commands
 
-```
-recalldory add <content> [--tags <tags>] [--scope <scope>] [--pin]
-recalldory recall <query> [--scope <scope>] [--top <n>]
-recalldory list [--scope <scope>] [--status <status>] [--limit <n>]
-recalldory forget <id>
-recalldory pin <id>
-recalldory unpin <id>
-recalldory feedback <id> <helpful|harmful>
-recalldory maintain [--dry-run]
-recalldory stats [--verbose]
-recalldory export
-recalldory import <file>
-recalldory agents-md [--path <path>]
-```
+### Core Operations
 
-## Building
+| Command | Description |
+|---------|-------------|
+| `add <content> [--tags T] [--scope S] [--pin]` | Store a memory (optionally pin it) |
+| `recall <query> [--scope S] [--top N]` | Full-text search with BM25 ranking |
+| `list [--scope S] [--status S] [--limit N]` | List memories by scope/status |
+| `forget <id>` | Delete a memory |
+| `feedback <id> helpful\|harmful` | Mark memory quality |
 
-```bash
-inko build
-```
+### Memory Lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `pin <id>` | Protect from decay/deletion (for important memories) |
+| `unpin <id>` | Remove pin protection |
+| `maintain [--dry-run]` | Run decay, anti-pattern promotion, and pruning |
+
+### Data Management
+
+| Command | Description |
+|---------|-------------|
+| `export` | Full JSON backup of all memories |
+| `import <file>` | Restore from JSON backup |
+| `agents-md [--path P]` | Generate AGENTS.md from pinned + anti-pattern memories |
+| `stats` | Show memory statistics |
+
+### Hooks
+
+| Command | Description |
+|---------|-------------|
+| `hook install` | Install post-compact hook into `~/.claude/settings.json` |
+| `hook post-compact` | Run by hook to inject memories (usually automatic) |
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Manual add only | LLM-generated "important" memories are noisy; explicit curation is reliable |
+| No automatic extraction | Avoids memory bloat from trivial observations |
+| Decay for ranking, not deletion | Rare edge cases ("avoid v2.3 bug") shouldn't be lost to time |
+| 3+ harmful marks → anti-pattern | Requires consensus before treating as "never do this" |
+| Pinning exempts from all decay | Important memories stay forever |
+| SQLite + FTS5 | Simple, fast, no external dependencies |
+| Scope (project/global) | Keep project-specific knowledge separate from universal patterns |
 
 ## Data Storage
 
 Memories are stored in `.recalldory/memory.db` (SQLite with FTS5).
+
+Use `--global` flag to use `~/.recalldory/memory.db` instead.
+
+## For AI Agents
+
+If you're an AI assistant reading this, here's what you need to know:
+
+**Primary command**: `recalldory recall "<query>"` — Returns JSON with matching memories.
+
+**Key behaviors**:
+- Adding memories is the *user's* decision. Never auto-add.
+- Use `recall` to find relevant context before starting work.
+- If the user asks you to remember something, use `recalldory add "<content>"`.
+- Memories are project-scoped by default; use `--global` for cross-project knowledge.
+
+**Ready-to-paste for CLAUDE.md**:
+```markdown
+## Recalldory Memory
+
+This project uses recalldory for persistent memory across sessions.
+
+- Check memories before starting: `recalldory recall "<topic>"`
+- User explicitly adds memories — do not auto-add observations
+- Hook auto-injects memories after context compaction
+```
+
+## Similar Projects
+
+The following projects also provide persistent memory for AI agents (listed alphabetically):
+
+- **[AgentKits-Memory](https://github.com/aitytech/agentkits-memory)** - Persistent memory system for AI coding assistants via MCP, compatible with Claude Code, Cursor, Copilot, Windsurf, and Cline.
+- **[CASS Memory System](https://github.com/Dicklesworthstone/cass_memory_system)** - Procedural memory for AI coding agents that transforms scattered session history into persistent, cross-agent memory.
+- **[claude-engram](https://github.com/mlapeter/claude-engram)** - Brain-inspired persistent memory for Claude.ai featuring salience scoring, forgetting curves, and sleep consolidation modeled on hippocampal memory.
+- **[claude-mem](https://github.com/thedotmack/claude-mem)** - Fully automatic memory for Claude Code via lifecycle hooks with 3-layer progressive disclosure search and web viewer UI.
+- **[Double](https://github.com/ossa-ma/double)** - A local memory system for AI agents.
+- **[Engram](https://codeberg.org/GhostFrame/engram)** (GhostFrame) - Cognitive layer for AI agents with FSRS-6 spaced repetition, personality extraction, and reasoning with contradiction detection.
+- **[Engram](https://github.com/Gentleman-Programming/engram)** (Gentleman-Programming) - Agent-agnostic Go binary with SQLite + FTS5 providing persistent memory via MCP server, HTTP API, CLI, and TUI.
+- **[Lavra](https://github.com/roberto-mello/lavra)** - A plugin with compound engineering workflows and memory for AI coding agents.
+- **[MnemoCore](https://github.com/RobinALG87/MnemoCore-Persistent-Cognitive-Ai-Memory)** - A persistent cognitive AI memory system.
+- **[Mnemoria](https://github.com/one-bit/mnemoria)** - Git-friendly memory storage for AI agents with hybrid semantic + full-text search and append-only binary format.
+- **[Smriti-MCP](https://github.com/tejzpr/Smriti-MCP)** - Graph-based memory for LLMs with EcphoryRAG-inspired multi-stage retrieval combining cue extraction, graph traversal, and vector similarity.
+- **[Smriti](https://github.com/zero8dotdev/smriti)** (zero8dotdev) - Shared memory for AI engineering teams with git-based team knowledge sharing across Claude Code, Cursor, and Codex.
+- **[true-mem](https://github.com/rizal72/true-mem)** - Persistent memory plugin for OpenCode with cognitive psychology-based memory management.
+
+Note: [deepseek-ai/Engram](https://github.com/deepseek-ai/Engram) is a research project on conditional memory via scalable lookup for LLMs (ML architecture), rather than a persistent memory storage system.
+
+## Why Not...?
+
+Some AI memory systems include features inspired by cognitive science. Here's why `recalldory` doesn't:
+
+**[FSRS-6](https://github.com/open-spaced-repetition/fsrs4anki) / [Spaced Repetition](https://en.wikipedia.org/wiki/Spaced_repetition)** — These algorithms model *human* [forgetting curves](https://en.wikipedia.org/wiki/Forgetting_curve) (biological memory decay). AI retrieval is binary: context is either in the prompt window or it isn't. There's no evidence spaced repetition improves AI memory retrieval.
+
+**[Sleep Consolidation](https://en.wikipedia.org/wiki/Memory_consolidation)** — The metaphor is lovely, but what's actually useful is just database hygiene: deduplication and merging. `recalldory` does this via SimHash near-duplicate detection during `add` operations.
+
+**Complex [Salience](https://en.wikipedia.org/wiki/Salience_(neuroscience)) Scoring** — LLM-generated importance scores are noisy and self-reinforcing. Simple access frequency + explicit feedback (helpful/harmful) is more robust and deterministic.
+
+**[Graph-Based Memory](https://en.wikipedia.org/wiki/Knowledge_graph) / Multi-Hop Association** — Theoretically interesting, but no benchmarks show it outperforms good similarity search. Entity extraction is noisy, and the implementation complexity is high for unclear payoff.
+
+**Aggressive Decay-Based Deletion** — Decay is useful for *ranking* retrieval results, but dangerous for *deletion*. It can lose rare-but-critical edge cases (e.g., "don't use library X v2.3, it has a critical bug"). `recalldory` uses decay for ranking only — deletion requires explicit harmful feedback (3+ marks).
+
+**Contradiction Detection** — Coding context rarely has true logical contradictions. Instead, you have updates ("we migrated to Postgres"), context-dependent rules, and preference drift. These create false positives. `recalldory` includes this feature but it's optional and low-priority. See [paraconsistent logic](https://en.wikipedia.org/wiki/Paraconsistent_logic) for how formal systems handle contradictions.
+
+**What actually works**: Simple strength scoring, deduplication, scope separation, FTS + strength-based ranking, and explicit user feedback. Good database design beats cognitive science metaphors.
