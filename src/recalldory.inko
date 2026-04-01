@@ -24,7 +24,7 @@ type async Main {
         let cmd = parsed.into_command
 
         match cmd {
-          case Help -> out.print('{"error": "No command specified. Run with --help for usage."}')
+          case Help -> print_help(out)
           case HookPostCompact -> handle_hook_post_compact(out)
           case HookInstall -> handle_hook_install(out)
           case Db(db_cmd) -> run_with_db(db_cmd, global, out)

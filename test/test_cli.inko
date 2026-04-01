@@ -1,7 +1,7 @@
 import recalldory.cli (
   FlagParser, int_parse, parse_add, parse_feedback, parse_forget,
   parse_maintain, parse_recall, parse_update, validate_scope,
-  validate_status, validate_feedback_type, parse_list,
+  validate_status, parse_list,
 )
 import std.test (Tests)
 
@@ -240,22 +240,6 @@ fn pub tests(t: mut Tests) {
     t.equal(validate_status('foo'), false)
     t.equal(validate_status(''), false)
     t.equal(validate_status('ACTIVE'), false)
-  })
-
-  # --- validate_feedback_type ---
-
-  t.test('validate_feedback_type accepts helpful', fn (t) {
-    t.equal(validate_feedback_type('helpful'), true)
-  })
-
-  t.test('validate_feedback_type accepts harmful', fn (t) {
-    t.equal(validate_feedback_type('harmful'), true)
-  })
-
-  t.test('validate_feedback_type rejects invalid type', fn (t) {
-    t.equal(validate_feedback_type('foo'), false)
-    t.equal(validate_feedback_type(''), false)
-    t.equal(validate_feedback_type('HELPFUL'), false)
   })
 
   # --- parse_add ---

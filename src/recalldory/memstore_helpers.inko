@@ -156,17 +156,3 @@ fn pub exec_with_two_ints(
   Result.Ok(db.changes)
 }
 
-fn pub exec_step(db: mut Database, sql: String) -> Result[Int, String] {
-  let mut stmt = match db.prepare(sql) {
-    case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare: ${e}')
-  }
-
-  let result = stmt.step
-
-  stmt.finalize
-
-  if result != SQLITE_DONE { return Result.Error('Statement execution failed') }
-
-  Result.Ok(db.changes)
-}

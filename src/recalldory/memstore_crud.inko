@@ -875,7 +875,7 @@ fn update_memory_inner(
     case Error(e) -> return Result.Error(e)
   }
 
-  match bind_int_or_err(mut insert_stmt, 11, old.is_contradiction.clone) {
+  match bind_int_or_err(mut insert_stmt, 11, old.is_contradiction) {
     case Ok(_) -> {}
     case Error(e) -> return Result.Error(e)
   }
@@ -897,7 +897,6 @@ fn update_memory_inner(
   Result.Ok(db.last_insert_rowid as Int)
 }
 
-# Walk the parent_id chain from a memory back to the original, returning all versions.
 # Walk the parent_id chain from a memory back to the original, returning all versions.
 # Returns a HistoryResult with versions and a truncated flag if the depth limit was hit.
 fn pub get_history(db: mut Database, id: Int) -> Result[HistoryResult, String] {

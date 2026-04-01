@@ -36,22 +36,6 @@ fn pub validate_status(status: String) -> Bool {
   valid
 }
 
-# Valid feedback type values
-let VALID_FEEDBACK_TYPES = ['helpful', 'harmful']
-
-fn pub validate_feedback_type(feedback_type: String) -> Bool {
-  let mut valid = false
-
-  for f in VALID_FEEDBACK_TYPES.iter {
-    if f == feedback_type {
-      valid = true
-      break
-    }
-  }
-
-  valid
-}
-
 # Parses flag arguments (--flag value) from a subcommand's argument slice.
 type pub FlagParser {
   let @args: Array[String]
