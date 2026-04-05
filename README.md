@@ -125,7 +125,11 @@ Use `--global` flag to use `~/.recalldory/memory.db` instead.
 
 ## For AI Agents
 
-If you're an AI assistant reading this, here's what you need to know:
+### Claude Code
+
+A Claude Code skill is included at `.claude/skills/recalldory/` and is loaded automatically when working in any project that contains it. Copy it to `~/.claude/skills/recalldory/` for global availability.
+
+### Other AI Assistants
 
 **Primary command**: `recalldory recall "<query>"` — Returns JSON with matching memories.
 
