@@ -34,6 +34,9 @@ jobs:
       - name: Format check
         run: inko fmt --check
 
+      - name: Install SQLite
+        run: dnf install -y sqlite-devel
+
       - name: Build
         run: inko build --release src/recalldory.inko
 
