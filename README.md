@@ -187,3 +187,15 @@ Some AI memory systems include features inspired by cognitive science. Here's wh
 **Contradiction Detection** — Coding context rarely has true logical contradictions. Instead, you have updates ("we migrated to Postgres"), context-dependent rules, and preference drift. These create false positives. `recalldory` includes this feature but it's optional and low-priority. See [paraconsistent logic](https://en.wikipedia.org/wiki/Paraconsistent_logic) for how formal systems handle contradictions.
 
 **What actually works**: Simple strength scoring, deduplication, scope separation, FTS + strength-based ranking, and explicit user feedback. Good database design beats cognitive science metaphors.
+
+## Relationship to Claude Code's Built-In Memory
+
+Claude Code has its own memory system: `CLAUDE.md` files for manual instructions, and an auto-memory system where the AI proactively saves notes to `~/.claude/projects/<project>/memory/` based on what it judges worth remembering. These are complementary, not competing:
+
+| | Claude Code Memory | Recalldory |
+|---|---|---|
+| **Curated by** | AI (automatic) | User (explicit) |
+| **Injected** | Session start, always | Post-compact hook |
+| **Best for** | Working preferences, feedback, communication style | Project-specific technical discoveries, gotchas, decisions |
+
+The gray zone is project-level facts (e.g. "this project uses X library"), which could end up in both. In practice: let Claude Code memory handle *how to work with you*; use `recalldory` for *what you've learned about the project*. The explicit curation model is the key difference — Claude Code's AI decides what to save, which can be noisy. `recalldory` only saves what you explicitly ask it to remember.
