@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     container:
-      image: ghcr.io/inko-lang/inko:0.19.1@sha256:cf6444cedba5e50b4f237ade5a44ee8860742d4e6d9f6986673e3f8a7104545d
+      image: ghcr.io/inko-lang/inko@sha256:8a3a8c8364ffbc245c8753dc7533a3611ddc8280f1ad23ced686de1cb613e362
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     container:
-      image: ghcr.io/inko-lang/inko:0.19.1@sha256:cf6444cedba5e50b4f237ade5a44ee8860742d4e6d9f6986673e3f8a7104545d
+      image: ghcr.io/inko-lang/inko@sha256:8a3a8c8364ffbc245c8753dc7533a3611ddc8280f1ad23ced686de1cb613e362
     strategy:
       matrix:
         target:
