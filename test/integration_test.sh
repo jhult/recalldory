@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RECALLDORY="${RECALLDORY:-$SCRIPT_DIR/../build/debug/recalldory}"
+RECALLDORY="${RECALLDORY:-$SCRIPT_DIR/../build/release/recalldory}"
 RECALLDORY="$(cd "$(dirname "$RECALLDORY")" && pwd)/$(basename "$RECALLDORY")"
 PASS=0
 FAIL=0
