@@ -1,11 +1,13 @@
 import recalldory.db (Database, init_schema, migrate_schema, to_cstr)
+import recalldory.memstore_contradiction (
+  list_contradictions, resolve_contradiction,
+)
 import recalldory.memstore_crud (
   add_memory, feedback_memory, forget_memory, get_history, list_memories,
   pin_memory, search_memories, unpin_memory, update_memory,
 )
-import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
-import recalldory.memstore_contradiction (list_contradictions, resolve_contradiction)
 import recalldory.memstore_import (export_memories, import_memories)
+import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
 import std.fs.file (WriteOnlyFile)
 import std.test (Tests)
 
@@ -281,27 +283,35 @@ fn pub tests(t: mut Tests) {
     match add_memory(db, 'boost test', '', 'project', false) {
       case Ok(result) -> {
         # Lower initial retrieval strength (default is 1.0, capped at 1.0)
-        let _ = db.exec('UPDATE memories SET retrieval_strength = 0.5 WHERE id = ${result.id}')
+        let _ = db.exec(
+          'UPDATE memories SET retrieval_strength = 0.5 WHERE id = ${result.id}',
+        )
 
-        let mut stmt = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+        let mut stmt = match
+          db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?')
+        {
           case Ok(s) -> s
           case Error(e) -> panic('prepare failed: ${e}')
         }
         let _ = stmt.bind_int(1, result.id)
         let _ = stmt.step
         let initial_strength = stmt.column_double(0)
+
         stmt.finalize
 
         let _ = feedback_memory(db, result.id, 'helpful')
 
         # Check retrieval strength increased
-        let mut stmt2 = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+        let mut stmt2 = match
+          db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?')
+        {
           case Ok(s) -> s
           case Error(e) -> panic('prepare failed: ${e}')
         }
         let _ = stmt2.bind_int(1, result.id)
         let _ = stmt2.step
         let new_strength = stmt2.column_double(0)
+
         stmt2.finalize
 
         t.true((new_strength as Float) > (initial_strength as Float))
@@ -318,27 +328,35 @@ fn pub tests(t: mut Tests) {
     match add_memory(db, 'reduce test', '', 'project', false) {
       case Ok(result) -> {
         # Set high initial retrieval strength
-        let _ = db.exec('UPDATE memories SET retrieval_strength = 0.8 WHERE id = ${result.id}')
+        let _ = db.exec(
+          'UPDATE memories SET retrieval_strength = 0.8 WHERE id = ${result.id}',
+        )
 
-        let mut stmt = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+        let mut stmt = match
+          db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?')
+        {
           case Ok(s) -> s
           case Error(e) -> panic('prepare failed: ${e}')
         }
         let _ = stmt.bind_int(1, result.id)
         let _ = stmt.step
         let initial_strength = stmt.column_double(0)
+
         stmt.finalize
 
         let _ = feedback_memory(db, result.id, 'harmful')
 
         # Check retrieval strength decreased
-        let mut stmt2 = match db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?') {
+        let mut stmt2 = match
+          db.prepare('SELECT retrieval_strength FROM memories WHERE id = ?')
+        {
           case Ok(s) -> s
           case Error(e) -> panic('prepare failed: ${e}')
         }
         let _ = stmt2.bind_int(1, result.id)
         let _ = stmt2.step
         let new_strength = stmt2.column_double(0)
+
         stmt2.finalize
 
         t.true((new_strength as Float) < (initial_strength as Float))
@@ -714,7 +732,7 @@ fn pub tests(t: mut Tests) {
               case Ok(mems) -> {
                 let mut found = false
 
-                for m in mems.iter{
+                for m in mems.iter {
                   if m.id == result.id { found = true }
                 }
 

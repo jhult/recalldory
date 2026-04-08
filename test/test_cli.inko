@@ -1,7 +1,6 @@
 import recalldory.cli (
-  FlagParser, int_parse, parse_add, parse_feedback, parse_forget,
-  parse_maintain, parse_recall, parse_update, validate_scope,
-  validate_status, parse_list,
+  FlagParser, int_parse, parse_add, parse_feedback, parse_forget, parse_list,
+  parse_maintain, parse_recall, parse_update, validate_scope, validate_status,
 )
 import std.test (Tests)
 
@@ -339,17 +338,20 @@ fn pub tests(t: mut Tests) {
     }
   })
 
-  t.test('parse_feedback accepts any type (validation in feedback_memory)', fn (t) {
-    let args = ['feedback', '1', 'invalid']
+  t.test(
+    'parse_feedback accepts any type (validation in feedback_memory)',
+    fn (t) {
+      let args = ['feedback', '1', 'invalid']
 
-    match parse_feedback(args) {
-      case Some(_) -> {
-        # Validation is now handled by feedback_memory, not the parser
-        t.true(true)
+      match parse_feedback(args) {
+        case Some(_) -> {
+          # Validation is now handled by feedback_memory, not the parser
+          t.true(true)
+        }
+        case None -> t.true(false)
       }
-      case None -> t.true(false)
-    }
-  })
+    },
+  )
 
   # --- parse_maintain ---
 

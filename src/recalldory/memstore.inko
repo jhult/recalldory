@@ -12,11 +12,13 @@ fn pub open_database(global: Bool) -> Result[Database, String] {
     let dir = '${home}/.recalldory'.to_path
 
     let _ = dir.create_directory
+
     '${home}/.recalldory/memory.db'
   } else {
     let dir = '.recalldory'.to_path
 
     let _ = dir.create_directory
+
     './.recalldory/memory.db'
   }
 

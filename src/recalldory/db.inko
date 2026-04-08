@@ -124,6 +124,7 @@ impl Database {
   fn pub mut close {
     if @handle as Int != 0 {
       let _ = sqlite3_close(@handle)
+
       @handle = 0 as Pointer[UInt8]
     }
   }
@@ -434,7 +435,7 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
 
   # Populate LSH band columns for existing memories that have simhash but no bands
   let _ = db.exec(
-    "UPDATE memories SET simhash_band1 = substr(simhash, 1, 2), simhash_band2 = substr(simhash, 3, 2), simhash_band3 = substr(simhash, 5, 2), simhash_band4 = substr(simhash, 7, 2) WHERE simhash IS NOT NULL AND simhash_band1 IS NULL",
+    'UPDATE memories SET simhash_band1 = substr(simhash, 1, 2), simhash_band2 = substr(simhash, 3, 2), simhash_band3 = substr(simhash, 5, 2), simhash_band4 = substr(simhash, 7, 2) WHERE simhash IS NOT NULL AND simhash_band1 IS NULL',
   )
 
   # Data migration: set storage_strength from strength (scale 0-1 to 0-10)
@@ -540,7 +541,9 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
 
   # Begin transaction for atomic DDL operations
   match db.exec('BEGIN') {
-    case Error(e) -> return Result.Error('Failed to begin FTS migration transaction: ${e}')
+    case Error(e) -> {
+      return Result.Error('Failed to begin FTS migration transaction: ${e}')
+    }
     case Ok(_) -> {}
   }
 
@@ -560,6 +563,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
     {
       case Error(e) -> {
         let _ = db.exec('ROLLBACK')
+
         return Result.Error('Failed to create FTS table: ${e}')
       }
       case Ok(_) -> {}
@@ -574,6 +578,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   {
     case Error(e) -> {
       let _ = db.exec('ROLLBACK')
+
       return Result.Error('Failed to create trigger: ${e}')
     }
     case Ok(_) -> {}
@@ -586,6 +591,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   {
     case Error(e) -> {
       let _ = db.exec('ROLLBACK')
+
       return Result.Error('Failed to create trigger: ${e}')
     }
     case Ok(_) -> {}
@@ -598,6 +604,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   {
     case Error(e) -> {
       let _ = db.exec('ROLLBACK')
+
       return Result.Error('Failed to create trigger: ${e}')
     }
     case Ok(_) -> {}
@@ -608,6 +615,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
     match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
       case Error(e) -> {
         let _ = db.exec('ROLLBACK')
+
         return Result.Error('Failed to rebuild FTS: ${e}')
       }
       case Ok(_) -> {}
@@ -618,6 +626,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   match db.exec('COMMIT') {
     case Error(e) -> {
       let _ = db.exec('ROLLBACK')
+
       return Result.Error('Failed to commit FTS migration: ${e}')
     }
     case Ok(_) -> {}

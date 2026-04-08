@@ -2,11 +2,11 @@ import recalldory.hash (
   hamming_distance, hex_to_int, int_to_hex, sha256_hash, simhash,
   simhash_substr,
 )
-import std.test (Tests)
 import recalldory.text (
   count_entity_overlap, escape_json, extract_entities, has_negation_words,
   sanitize_fts5_query, to_lowercase,
 )
+import std.test (Tests)
 
 fn pub tests(t: mut Tests) {
   # --- sha256_hash ---

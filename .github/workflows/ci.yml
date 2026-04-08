@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. 1.0.0)'
+        description: "Release version (e.g. 1.0.0)"
         required: true
         type: string
 
@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Format check
-        run: inko fmt --check src/ test/
+        run: inko fmt --check
 
       - name: Build
         run: inko build --release src/recalldory.inko

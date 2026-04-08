@@ -1,8 +1,8 @@
+import recalldory.memstore_helpers (
+  STATUS_ACTIVE, STATUS_ANTI_PATTERN, STATUS_PINNED, STATUS_SUPERSEDED,
+)
 import std.env
 import std.stdio (Stdout)
-import recalldory.memstore_helpers (
-  STATUS_ACTIVE, STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN,
-)
 
 # Valid scope values
 let VALID_SCOPES = ['project', 'global', 'user']
@@ -21,7 +21,9 @@ fn pub validate_scope(scope: String) -> Bool {
 }
 
 # Valid status values for list command
-let VALID_STATUSES = [STATUS_ACTIVE, STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN]
+let VALID_STATUSES = [
+  STATUS_ACTIVE, STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN,
+]
 
 fn pub validate_status(status: String) -> Bool {
   let mut valid = false
@@ -259,6 +261,7 @@ fn pub parse_recall(args: Array[String]) -> Option[Command] {
   let top = match parser.int_flag('--top') {
     case Some(v) -> {
       if v < 1 { return Option.None }
+
       v
     }
     case None -> 10
@@ -277,6 +280,7 @@ fn pub parse_list(args: Array[String]) -> Option[Command] {
   let limit = match parser.int_flag('--limit') {
     case Some(v) -> {
       if v < 1 { return Option.None }
+
       v
     }
     case None -> 50
@@ -406,20 +410,15 @@ fn pub int_parse(s: String) -> Option[Int] {
                 return Option.None
               }
             }
-            if result > 922337203685477580 {
-              return Option.None
-            }
-            if result == 922337203685477580 and digit > 8 {
-              return Option.None
-            }
+
+            if result > 922337203685477580 { return Option.None }
+
+            if result == 922337203685477580 and digit > 8 { return Option.None }
           } else {
             # For positive numbers, Int.MAX (9223372036854775807) is the limit
-            if result > 922337203685477580 {
-              return Option.None
-            }
-            if result == 922337203685477580 and digit > 7 {
-              return Option.None
-            }
+            if result > 922337203685477580 { return Option.None }
+
+            if result == 922337203685477580 and digit > 7 { return Option.None }
           }
 
           valid = true
@@ -435,11 +434,7 @@ fn pub int_parse(s: String) -> Option[Int] {
   }
 
   if valid {
-    if negative {
-      Option.Some(0 - result)
-    } else {
-      Option.Some(result)
-    }
+    if negative { Option.Some(0 - result) } else { Option.Some(result) }
   } else {
     Option.None
   }
@@ -485,17 +480,39 @@ fn pub print_help(out: Stdout) {
   let _ = out.print('recalldory - persistent memory for AI coding assistants\n')
   let _ = out.print('Usage: recalldory <command> [options] [--global]\n')
   let _ = out.print('\nCommands:')
-  let _ = out.print('  add <content> [--tags T] [--scope S] [--pin]   Add a memory')
-  let _ = out.print('  recall <query> [--scope S] [--top N]            Search memories')
-  let _ = out.print('  list [--scope S] [--status S] [--limit N]       List memories')
-  let _ = out.print('  update <id> [content] [--content C] [--tags T]  Update a memory')
-  let _ = out.print('  forget <id>                                     Delete a memory')
-  let _ = out.print('  pin <id>                                        Pin a memory')
-  let _ = out.print('  unpin <id>                                      Unpin a memory')
-  let _ = out.print('  feedback <id> <helpful|harmful>                 Give feedback')
-  let _ = out.print('  maintain [--dry-run]                            Run maintenance')
-  let _ = out.print('  stats                                           Show statistics')
-  let _ = out.print('  export                                          Export as JSON')
+  let _ = out.print(
+    '  add <content> [--tags T] [--scope S] [--pin]   Add a memory',
+  )
+  let _ = out.print(
+    '  recall <query> [--scope S] [--top N]            Search memories',
+  )
+  let _ = out.print(
+    '  list [--scope S] [--status S] [--limit N]       List memories',
+  )
+  let _ = out.print(
+    '  update <id> [content] [--content C] [--tags T]  Update a memory',
+  )
+  let _ = out.print(
+    '  forget <id>                                     Delete a memory',
+  )
+  let _ = out.print(
+    '  pin <id>                                        Pin a memory',
+  )
+  let _ = out.print(
+    '  unpin <id>                                      Unpin a memory',
+  )
+  let _ = out.print(
+    '  feedback <id> <helpful|harmful>                 Give feedback',
+  )
+  let _ = out.print(
+    '  maintain [--dry-run]                            Run maintenance',
+  )
+  let _ = out.print(
+    '  stats                                           Show statistics',
+  )
+  let _ = out.print(
+    '  export                                          Export as JSON',
+  )
   let _ = out.print(
     '  import <file>                                   Import from JSON',
   )

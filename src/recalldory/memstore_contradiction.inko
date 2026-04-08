@@ -1,9 +1,11 @@
-import recalldory.db (Database, SQLITE_ROW, SQLITE_DONE)
+import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW)
 import recalldory.memory (Memory)
-import recalldory.memstore_helpers (MEMORY_COLUMNS, STATUS_ACTIVE, exec_with_int)
+import recalldory.memstore_helpers (
+  MEMORY_COLUMNS, STATUS_ACTIVE, exec_with_int,
+)
 import recalldory.text (
-  extract_entities, has_negation_words, sanitize_fts5_query, to_lowercase,
-  count_entity_overlap,
+  count_entity_overlap, extract_entities, has_negation_words,
+  sanitize_fts5_query, to_lowercase,
 )
 
 # --- Contradiction detection ---
@@ -44,7 +46,9 @@ fn pub check_contradiction(
   let search_sql = "SELECT m.id, m.content FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status = '${STATUS_ACTIVE}'"
   let mut stmt = match db.prepare(search_sql) {
     case Ok(s) -> s
-    case Error(e) -> return Result.Error('Failed to prepare contradiction search: ${e}')
+    case Error(e) -> {
+      return Result.Error('Failed to prepare contradiction search: ${e}')
+    }
   }
 
   match stmt.bind_text(1, fts_query) {
@@ -78,9 +82,7 @@ fn pub check_contradiction(
     if overlap_count >= 2 {
       let mem_has_negation = has_negation_words(ref mem_bytes)
 
-      if has_negation != mem_has_negation {
-        contradicting_ids.push(mem_id)
-      }
+      if has_negation != mem_has_negation { contradicting_ids.push(mem_id) }
     }
   }
 

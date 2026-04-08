@@ -1,7 +1,7 @@
 import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW)
 import recalldory.memory (MaintainStats, MemoryStats)
 import recalldory.memstore_helpers (
-  STATUS_PINNED, STATUS_SUPERSEDED, STATUS_ANTI_PATTERN, STATUS_ACTIVE,
+  STATUS_ACTIVE, STATUS_ANTI_PATTERN, STATUS_PINNED, STATUS_SUPERSEDED,
   exec_sql, rollback_or_error,
 )
 
@@ -16,9 +16,7 @@ fn pub maintain_memory(
     }
 
     match exec_sql(db, 'SAVEPOINT dry_run') {
-      case Error(e) -> {
-        return Result.Error(rollback_or_error(db, e))
-      }
+      case Error(e) -> return Result.Error(rollback_or_error(db, e))
       case Ok(_) -> {}
     }
 
@@ -31,6 +29,7 @@ fn pub maintain_memory(
       }
       case Error(e) -> {
         let _ = exec_sql(db, 'ROLLBACK TO dry_run')
+
         return Result.Error(rollback_or_error(db, e))
       }
     }
@@ -52,9 +51,7 @@ fn pub maintain_memory(
 
       Result.Ok(v)
     }
-    case Error(e) -> {
-      Result.Error(rollback_or_error(db, e))
-    }
+    case Error(e) -> Result.Error(rollback_or_error(db, e))
   }
 }
 

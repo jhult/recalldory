@@ -1,17 +1,23 @@
 import recalldory.cli (DbCommand, parse_args, print_help)
 import recalldory.db (Database)
 import recalldory.hooks (handle_hook_install, handle_hook_post_compact)
-import recalldory.memory (output_contradictions, output_history, output_memories)
+import recalldory.memory (
+  output_contradictions, output_history, output_memories,
+)
 import recalldory.memstore (open_database)
+import recalldory.memstore_contradiction (
+  list_contradictions, resolve_contradiction,
+)
 import recalldory.memstore_crud (
   add_memory, feedback_memory, forget_memory, get_history, list_memories,
   pin_memory, search_memories, unpin_memory, update_memory,
 )
+import recalldory.memstore_import (
+  export_memories, generate_agents_md, import_memories,
+)
 import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
-import recalldory.memstore_contradiction (list_contradictions, resolve_contradiction)
-import recalldory.memstore_import (export_memories, generate_agents_md, import_memories)
-import std.stdio (Stdout)
 import recalldory.text (escape_json)
+import std.stdio (Stdout)
 
 # Application entry point.
 type async Main {

@@ -37,7 +37,11 @@ fn pub bind_text_or_err(
   }
 }
 
-fn pub bind_int(db_stmt: mut Statement, idx: Int, val: Int) -> Result[Nil, String] {
+fn pub bind_int(
+  db_stmt: mut Statement,
+  idx: Int,
+  val: Int,
+) -> Result[Nil, String] {
   match db_stmt.bind_int(idx, val) {
     case Ok(_) -> Result.Ok(nil)
     case Error(e) -> Result.Error('Failed to bind: ${e}')
@@ -155,4 +159,3 @@ fn pub exec_with_two_ints(
 
   Result.Ok(db.changes)
 }
-

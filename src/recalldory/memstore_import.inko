@@ -1,17 +1,17 @@
 import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW, to_cstr)
-import std.env
 import recalldory.memory (ImportResult)
-import recalldory.memstore_helpers (
-  MEMORY_COLUMNS, STATUS_PINNED, STATUS_ANTI_PATTERN,
-  exec_sql, exec_with_int, rollback_or_error,
-)
 import recalldory.memstore_crud (add_memory_inner)
+import recalldory.memstore_helpers (
+  MEMORY_COLUMNS, STATUS_ANTI_PATTERN, STATUS_PINNED, exec_sql, exec_with_int,
+  rollback_or_error,
+)
 import std.bytes (ByteArray)
+import std.env
 import std.fs.file (ReadOnlyFile, WriteOnlyFile)
+import std.fs.path (Path)
 import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
-import std.fs.path (Path)
 
 fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
 
@@ -58,9 +58,7 @@ fn is_absolute_path(path: String) -> Bool {
 # a symlink within an allowed directory points outside it.
 fn validate_path(path: String, allow_tmp: Bool) -> Result[Path, String] {
   # Check for path traversal in the original path (fast-fail)
-  if path.contains?('..') {
-    return Result.Error('Path must not contain ".."')
-  }
+  if path.contains?('..') { return Result.Error('Path must not contain ".."') }
 
   # Track whether the original path was absolute for symlink check later
   let original_is_absolute = is_absolute_path(path)
@@ -215,6 +213,7 @@ fn pub generate_agents_md(
             # Clean up temp file on failure
             let tmp_cstr = to_cstr(tmp_path)
             let _ = unlink(tmp_cstr.pointer)
+
             Result.Error('Failed to rename temp file to AGENTS.md')
           }
         }
@@ -364,9 +363,7 @@ fn pub import_memories(
         case Error(e) -> Result.Error('Failed to commit: ${e}')
       }
     }
-    case Error(e) -> {
-      Result.Error(rollback_or_error(db, e))
-    }
+    case Error(e) -> Result.Error(rollback_or_error(db, e))
   }
 }
 
@@ -428,7 +425,9 @@ fn import_memories_inner(
             case None -> Option.None
           }
 
-          let old_contradicts_id = match mem.query.key('contradicts_id').as_int {
+          let old_contradicts_id = match
+            mem.query.key('contradicts_id').as_int
+          {
             case Some(v) -> if v > 0 { Option.Some(v) } else { Option.None }
             case None -> Option.None
           }
