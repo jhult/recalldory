@@ -65,6 +65,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install SQLite
+        run: dnf install -y sqlite-devel
+
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
