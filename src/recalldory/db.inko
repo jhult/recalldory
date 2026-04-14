@@ -8,97 +8,97 @@ let pub SQLITE_TRANSIENT = -1
 
 # Wrapper around a raw SQLite database handle.
 type pub Database {
-  let mut @handle: Pointer[UInt8]
+  let mut @handle: Pointer[Uint8]
   let @path: String
 }
 
 # Wrapper around a raw SQLite prepared statement handle.
 type pub Statement {
-  let mut @handle: Pointer[UInt8]
+  let mut @handle: Pointer[Uint8]
 }
 
 # External SQLite functions
-fn extern sqlite3_open(filename: Pointer[UInt8], db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_open(filename: Pointer[Uint8], db: Pointer[Uint8]) -> Int32
 
-fn extern sqlite3_close(db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_close(db: Pointer[Uint8]) -> Int32
 
 fn extern sqlite3_exec(
-  db: Pointer[UInt8],
-  sql: Pointer[UInt8],
-  callback: Pointer[UInt8],
-  arg: Pointer[UInt8],
-  errmsg: Pointer[UInt8],
+  db: Pointer[Uint8],
+  sql: Pointer[Uint8],
+  callback: Pointer[Uint8],
+  arg: Pointer[Uint8],
+  errmsg: Pointer[Uint8],
 ) -> Int32
 
 fn extern sqlite3_prepare_v2(
-  db: Pointer[UInt8],
-  sql: Pointer[UInt8],
+  db: Pointer[Uint8],
+  sql: Pointer[Uint8],
   nbyte: Int32,
-  stmt: Pointer[UInt8],
-  tail: Pointer[UInt8],
+  stmt: Pointer[Uint8],
+  tail: Pointer[Uint8],
 ) -> Int32
 
-fn extern sqlite3_step(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_step(stmt: Pointer[Uint8]) -> Int32
 
-fn extern sqlite3_finalize(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_finalize(stmt: Pointer[Uint8]) -> Int32
 
-fn extern sqlite3_reset(stmt: Pointer[UInt8]) -> Int32
+fn extern sqlite3_reset(stmt: Pointer[Uint8]) -> Int32
 
-fn extern sqlite3_column_type(stmt: Pointer[UInt8], col: Int32) -> Int32
+fn extern sqlite3_column_type(stmt: Pointer[Uint8], col: Int32) -> Int32
 
 fn extern sqlite3_column_text(
-  stmt: Pointer[UInt8],
+  stmt: Pointer[Uint8],
   col: Int32,
-) -> Pointer[UInt8]
+) -> Pointer[Uint8]
 
-fn extern sqlite3_column_int64(stmt: Pointer[UInt8], col: Int32) -> Int64
+fn extern sqlite3_column_int64(stmt: Pointer[Uint8], col: Int32) -> Int64
 
-fn extern sqlite3_column_double(stmt: Pointer[UInt8], col: Int32) -> Float64
+fn extern sqlite3_column_double(stmt: Pointer[Uint8], col: Int32) -> Float64
 
 fn extern sqlite3_bind_text(
-  stmt: Pointer[UInt8],
+  stmt: Pointer[Uint8],
   idx: Int32,
-  val: Pointer[UInt8],
+  val: Pointer[Uint8],
   n: Int32,
   destructor: Int64,
 ) -> Int32
 
 fn extern sqlite3_bind_int64(
-  stmt: Pointer[UInt8],
+  stmt: Pointer[Uint8],
   idx: Int32,
   val: Int64,
 ) -> Int32
 
 fn extern sqlite3_bind_double(
-  stmt: Pointer[UInt8],
+  stmt: Pointer[Uint8],
   idx: Int32,
   val: Float64,
 ) -> Int32
 
-fn extern sqlite3_bind_null(stmt: Pointer[UInt8], idx: Int32) -> Int32
+fn extern sqlite3_bind_null(stmt: Pointer[Uint8], idx: Int32) -> Int32
 
-fn extern sqlite3_errmsg(db: Pointer[UInt8]) -> Pointer[UInt8]
+fn extern sqlite3_errmsg(db: Pointer[Uint8]) -> Pointer[Uint8]
 
-fn extern sqlite3_last_insert_rowid(db: Pointer[UInt8]) -> Int64
+fn extern sqlite3_last_insert_rowid(db: Pointer[Uint8]) -> Int64
 
-fn extern sqlite3_changes(db: Pointer[UInt8]) -> Int32
+fn extern sqlite3_changes(db: Pointer[Uint8]) -> Int32
 
 # External C functions for memory management
-fn extern malloc(size: UInt64) -> Pointer[UInt8]
+fn extern malloc(size: Uint64) -> Pointer[Uint8]
 
-fn extern free(ptr: Pointer[UInt8])
+fn extern free(ptr: Pointer[Uint8])
 
 impl Database {
   # Open a SQLite database at the given path. Sets a 5-second busy timeout.
   fn pub static new(path: String) -> Result[Database, String] {
     # Allocate 8 bytes for the output pointer (64-bit)
-    let db_ptr_addr = malloc(8 as UInt64)
+    let db_ptr_addr = malloc(8 as Uint64)
 
     let path_bytes = to_cstr(path)
     let result = sqlite3_open(path_bytes.pointer, db_ptr_addr)
 
     if (result as Int) != 0 {
-      let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
+      let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[Uint8]
       let errmsg = sqlite3_errmsg(db_ptr)
       let err_str = pointer_to_string(errmsg)
 
@@ -108,7 +108,7 @@ impl Database {
     }
 
     # Read the pointer value from the allocated memory
-    let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
+    let db_ptr = (db_ptr_addr as Pointer[Int64]).0 as Pointer[Uint8]
 
     free(db_ptr_addr)
 
@@ -125,7 +125,7 @@ impl Database {
     if @handle as Int != 0 {
       let _ = sqlite3_close(@handle)
 
-      @handle = 0 as Pointer[UInt8]
+      @handle = 0 as Pointer[Uint8]
     }
   }
 
@@ -137,9 +137,9 @@ impl Database {
     let result = sqlite3_exec(
       @handle,
       sql_bytes.pointer,
-      0 as Pointer[UInt8],
-      0 as Pointer[UInt8],
-      0 as Pointer[UInt8],
+      0 as Pointer[Uint8],
+      0 as Pointer[Uint8],
+      0 as Pointer[Uint8],
     )
 
     if (result as Int) != 0 {
@@ -156,14 +156,14 @@ impl Database {
     if @handle as Int == 0 { return Result.Error('Database not open') }
 
     let sql_bytes = to_cstr(sql)
-    let stmt_ptr_addr = malloc(8 as UInt64)
+    let stmt_ptr_addr = malloc(8 as Uint64)
 
     let result = sqlite3_prepare_v2(
       @handle,
       sql_bytes.pointer,
       (sql_bytes.size as Int32),
       stmt_ptr_addr,
-      0 as Pointer[UInt8],
+      0 as Pointer[Uint8],
     )
 
     if (result as Int) != 0 {
@@ -173,7 +173,7 @@ impl Database {
       return Result.Error('Prepare error: ${pointer_to_string(errmsg)}')
     }
 
-    let stmt_ptr = (stmt_ptr_addr as Pointer[Int64]).0 as Pointer[UInt8]
+    let stmt_ptr = (stmt_ptr_addr as Pointer[Int64]).0 as Pointer[Uint8]
 
     free(stmt_ptr_addr)
 
@@ -210,7 +210,7 @@ impl Statement {
   fn pub mut finalize {
     if @handle as Int != 0 {
       sqlite3_finalize(@handle)
-      @handle = 0 as Pointer[UInt8]
+      @handle = 0 as Pointer[Uint8]
     }
   }
 
@@ -308,7 +308,7 @@ fn fts_sql_has_content_option(sql: String) -> Bool {
 # String.from_pointer performs a deep copy of the data, so the returned
 # String is independent of the SQLite statement's memory and remains valid
 # after stmt.step() or stmt.finalize() is called.
-fn pointer_to_string(ptr: Pointer[UInt8]) -> String {
+fn pointer_to_string(ptr: Pointer[Uint8]) -> String {
   if ptr as Int == 0 { return '' }
 
   String.from_pointer(ptr)

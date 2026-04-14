@@ -13,9 +13,9 @@ import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
 
-fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
+fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
 
-fn extern unlink(path: Pointer[UInt8]) -> Int32
+fn extern unlink(path: Pointer[Uint8]) -> Int32
 
 # Check if a path is under a temp directory (TMPDIR, /tmp, or /var/folders)
 fn is_temp_path(path: String) -> Bool {
