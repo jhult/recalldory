@@ -167,6 +167,7 @@ The following projects also provide persistent memory for AI agents (listed alph
 - **[Smriti-MCP](https://github.com/tejzpr/Smriti-MCP)** - Graph-based memory for LLMs with EcphoryRAG-inspired multi-stage retrieval combining cue extraction, graph traversal, and vector similarity.
 - **[Smriti](https://github.com/zero8dotdev/smriti)** (zero8dotdev) - Shared memory for AI engineering teams with git-based team knowledge sharing across Claude Code, Cursor, and Codex.
 - **[true-mem](https://github.com/rizal72/true-mem)** - Persistent memory plugin for OpenCode with cognitive psychology-based memory management.
+- **[YantrikDB](https://github.com/yantrikos/yantrikdb-server)** - Cognitive memory engine with forgetting, consolidation, contradiction detection, and multi-signal relevance scoring (HNSW vector + graph + temporal + decay + KV). Embedded-first Rust library with Python/MCP bindings.
 
 Note: [deepseek-ai/Engram](https://github.com/deepseek-ai/Engram) is a research project on conditional memory via scalable lookup for LLMs (ML architecture), rather than a persistent memory storage system.
 
