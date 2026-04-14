@@ -22,6 +22,7 @@ concurrency:
 jobs:
   test:
     name: Test
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions: {}
     container:
@@ -46,7 +47,7 @@ jobs:
       - name: Integration tests
         run: bash test/integration_test.sh
 
-  release:
+  release-linux:
     name: Build (${{ matrix.target }})
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -60,20 +61,23 @@ jobs:
           - arm64-linux-gnu
           - amd64-linux-musl
           - arm64-linux-musl
-          - amd64-mac-native
-          - arm64-mac-native
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
 
       - name: Install dependencies
-        run: dnf install -y sqlite-devel xz
+        run: dnf install -y unzip xz
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
+
+      - name: Build SQLite
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/build-sqlite.sh "$TARGET"
 
       - name: Add runtime
         env:
@@ -83,7 +87,72 @@ jobs:
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
-        run: inko build --release --target "$TARGET" --linker zig src/recalldory.inko
+        run: ulimit -n 10240 && inko build --release --target "$TARGET" --linker zig --linker-arg "-L$PWD/lib" --static src/recalldory.inko
+
+      - name: Rename artifact
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mv "build/$TARGET/recalldory" "build/$TARGET/recalldory-$TARGET"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: recalldory-${{ matrix.target }}
+          path: build/${{ matrix.target }}/recalldory-${{ matrix.target }}
+
+  release-mac:
+    name: Build (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    permissions: {}
+    strategy:
+      matrix:
+        target:
+          - amd64-mac-native
+          - arm64-mac-native
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install Inko
+        run: brew install --HEAD inko
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Build SQLite
+        env:
+          TARGET: ${{ matrix.target }}
+        run: scripts/build-sqlite.sh "$TARGET"
+
+      - name: Add runtime
+        env:
+          TARGET: ${{ matrix.target }}
+        run: inko runtime add "$TARGET"
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          SDK_PATH="$(xcrun --show-sdk-path)"
+          if echo "$TARGET" | grep -q amd64; then
+            # Cross-compile x86_64: use system cc with target flag
+            inko build --release --target "$TARGET" \
+              --linker cc \
+              --linker-arg "-target" \
+              --linker-arg "x86_64-apple-macosx11.0" \
+              --linker-arg "-L$PWD/lib" \
+              --linker-arg "-F${SDK_PATH}/System/Library/Frameworks" \
+              src/recalldory.inko
+          else
+            # Native arm64: use default linker
+            inko build --release --target "$TARGET" \
+              --linker-arg "-L$PWD/lib" \
+              src/recalldory.inko
+          fi
 
       - name: Rename artifact
         env:
@@ -99,7 +168,7 @@ jobs:
   publish:
     name: Publish
     if: github.event_name == 'workflow_dispatch'
-    needs: release
+    needs: [release-linux, release-mac]
     runs-on: ubuntu-latest
     permissions:
       contents: write # required to create the GitHub release and tag
