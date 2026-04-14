@@ -128,7 +128,7 @@ fn parse_int_arg(args: ref Array[String], pos: Int) -> Option[Int] {
 type pub enum DbCommand {
   case Add(String, String, String, Bool)
   case Recall(String, String, Int)
-  case List(String, String, Int)
+  case List(String, String, Int, Option[Int])
   case Forget(Int)
   case Pin(Int)
   case Unpin(Int)
@@ -286,11 +286,20 @@ fn pub parse_list(args: Array[String]) -> Option[Command] {
     case None -> 50
   }
 
+  let older_than = match parser.int_flag('--older-than') {
+    case Some(v) -> {
+      if v < 1 { return Option.None }
+
+      Option.Some(v)
+    }
+    case None -> Option.None
+  }
+
   if scope != '' and !validate_scope(scope) { return Option.None }
 
   if status != '' and !validate_status(status) { return Option.None }
 
-  Option.Some(Command.Db(DbCommand.List(scope, status, limit)))
+  Option.Some(Command.Db(DbCommand.List(scope, status, limit, older_than)))
 }
 
 fn pub parse_forget(args: Array[String]) -> Option[Command] {
@@ -488,6 +497,9 @@ fn pub print_help(out: Stdout) {
   )
   let _ = out.print(
     '  list [--scope S] [--status S] [--limit N]       List memories',
+  )
+  let _ = out.print(
+    '         [--older-than N]                          Filter by days since access',
   )
   let _ = out.print(
     '  update <id> [content] [--content C] [--tags T]  Update a memory',

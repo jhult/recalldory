@@ -10,9 +10,9 @@ import std.json (Json)
 import std.map (Map)
 import std.stdio (Stdout)
 
-fn extern rename(old_path: Pointer[UInt8], new_path: Pointer[UInt8]) -> Int32
+fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
 
-fn extern unlink(path: Pointer[UInt8]) -> Int32
+fn extern unlink(path: Pointer[Uint8]) -> Int32
 
 # Handle the post-compact hook: output recent memories as additional context for Claude.
 fn pub handle_hook_post_compact(out: Stdout) {
@@ -47,7 +47,7 @@ fn query_memories_for_hook(global: Bool, header: String) -> String {
     case Ok(db) -> {
       let mut database = db
 
-      match list_memories(database, '', '', 10) {
+      match list_memories(database, '', '', 10, Option.None) {
         case Ok(mems) -> {
           database.close
 

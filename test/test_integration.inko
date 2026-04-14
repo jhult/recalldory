@@ -11,7 +11,7 @@ import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
 import std.fs.file (WriteOnlyFile)
 import std.test (Tests)
 
-fn extern remove(path: Pointer[UInt8]) -> Int32
+fn extern remove(path: Pointer[Uint8]) -> Int32
 
 fn test_db(name: String) -> Database {
   let dir = '.recalldory'.to_path
@@ -84,7 +84,7 @@ fn pub tests(t: mut Tests) {
       case Ok(result) -> {
         t.true(result.id > 0)
 
-        match list_memories(db, '', '', 10) {
+        match list_memories(db, '', '', 10, Option.None) {
           case Ok(mems) -> {
             t.equal(mems.size, 1)
 
@@ -166,7 +166,7 @@ fn pub tests(t: mut Tests) {
     let _ = add_memory(db, 'first', '', 'project', false)
     let _ = add_memory(db, 'second', '', 'project', false)
 
-    match list_memories(db, '', '', 50) {
+    match list_memories(db, '', '', 50, Option.None) {
       case Ok(mems) -> t.equal(mems.size, 2)
       case Error(e) -> panic('list failed: ${e}')
     }
@@ -179,7 +179,7 @@ fn pub tests(t: mut Tests) {
     let _ = add_memory(db, 'global mem', '', 'global', false)
     let _ = add_memory(db, 'project mem', '', 'project', false)
 
-    match list_memories(db, 'global', '', 50) {
+    match list_memories(db, 'global', '', 50, Option.None) {
       case Ok(mems) -> {
         t.equal(mems.size, 1)
 
@@ -206,7 +206,7 @@ fn pub tests(t: mut Tests) {
           case Error(e) -> panic('forget failed: ${e}')
         }
 
-        match list_memories(db, '', '', 50) {
+        match list_memories(db, '', '', 50, Option.None) {
           case Ok(mems) -> t.equal(mems.size, 0)
           case Error(_) -> {}
         }
@@ -229,7 +229,7 @@ fn pub tests(t: mut Tests) {
           case Error(e) -> panic('pin failed: ${e}')
         }
 
-        match list_memories(db, '', 'pinned', 10) {
+        match list_memories(db, '', 'pinned', 10, Option.None) {
           case Ok(mems) -> t.equal(mems.size, 1)
           case Error(e) -> panic('list pinned failed: ${e}')
         }
@@ -239,7 +239,7 @@ fn pub tests(t: mut Tests) {
           case Error(e) -> panic('unpin failed: ${e}')
         }
 
-        match list_memories(db, '', 'pinned', 10) {
+        match list_memories(db, '', 'pinned', 10, Option.None) {
           case Ok(mems) -> t.equal(mems.size, 0)
           case Error(_) -> {}
         }
@@ -589,6 +589,45 @@ fn pub tests(t: mut Tests) {
     db.close
   })
 
+  # --- list_memories older_than filter ---
+
+  t.test('list_memories filters by older_than days', fn (t) {
+    let mut db = test_db('list_older_than')
+
+    let _ = add_memory(db, 'recent memory', '', 'project', false)
+
+    # Set last_accessed to 40 days ago using raw SQL
+    let _ = db.exec(
+      "UPDATE memories SET last_accessed = datetime('now', '-40 days') WHERE content = 'recent memory'",
+    )
+
+    match list_memories(db, '', '', 50, Option.Some(30)) {
+      case Ok(mems) -> t.equal(mems.size, 1)
+      case Error(e) -> panic('list with older_than failed: ${e}')
+    }
+
+    # Without older_than, both should appear
+    match list_memories(db, '', '', 50, Option.None) {
+      case Ok(mems) -> t.equal(mems.size, 1)
+      case Error(e) -> panic('list without older_than failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('list_memories older_than excludes recent memories', fn (t) {
+    let mut db = test_db('list_older_than_recent')
+    let _ = add_memory(db, 'fresh memory', '', 'project', false)
+
+    # This memory was just created, so last_accessed is now
+    match list_memories(db, '', '', 50, Option.Some(30)) {
+      case Ok(mems) -> t.equal(mems.size, 0)
+      case Error(e) -> panic('list older_than recent failed: ${e}')
+    }
+
+    db.close
+  })
+
   # --- list_memories excludes superseded ---
 
   t.test('list_memories excludes superseded by default', fn (t) {
@@ -598,7 +637,7 @@ fn pub tests(t: mut Tests) {
       case Ok(result) -> {
         match update_memory(db, result.id, 'updated version', '', '') {
           case Ok(_) -> {
-            match list_memories(db, '', '', 50) {
+            match list_memories(db, '', '', 50, Option.None) {
               case Ok(mems) -> {
                 t.equal(mems.size, 1)
 
@@ -728,7 +767,7 @@ fn pub tests(t: mut Tests) {
           case Ok(stats) -> {
             t.true(stats.pruned >= 1)
 
-            match list_memories(db, '', '', 50) {
+            match list_memories(db, '', '', 50, Option.None) {
               case Ok(mems) -> {
                 let mut found = false
 

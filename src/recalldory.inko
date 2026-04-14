@@ -83,8 +83,8 @@ fn handle_command(cmd: DbCommand, db: mut Database, out: Stdout) {
         case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
     }
-    case List(scope, status, limit) -> {
-      match list_memories(db, scope, status, limit) {
+    case List(scope, status, limit, older_than) -> {
+      match list_memories(db, scope, status, limit, older_than) {
         case Ok(mems) -> output_memories(mems, out)
         case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
       }
