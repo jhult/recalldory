@@ -508,7 +508,7 @@ fn pub search_memories(
 
   if scope_filter != '' { sql = sql + ' AND m.scope = ?' }
 
-  sql = sql + ' ORDER BY bm25(memories_fts) LIMIT ?'
+  sql = sql + ' ORDER BY bm25(memories_fts), m.strength DESC LIMIT ?'
 
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
