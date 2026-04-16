@@ -92,7 +92,7 @@ jobs:
       - name: Rename artifact
         env:
           TARGET: ${{ matrix.target }}
-        run: mv "build/$TARGET/recalldory" "build/$TARGET/recalldory-$TARGET"
+        run: mv "build/$TARGET/release/recalldory" "build/$TARGET/recalldory-$TARGET"
 
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -157,7 +157,7 @@ jobs:
       - name: Rename artifact
         env:
           TARGET: ${{ matrix.target }}
-        run: mv "build/$TARGET/recalldory" "build/$TARGET/recalldory-$TARGET"
+        run: mv "build/$TARGET/release/recalldory" "build/$TARGET/recalldory-$TARGET"
 
       - name: Upload artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
