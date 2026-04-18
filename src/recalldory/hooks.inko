@@ -1,5 +1,5 @@
 import recalldory.db (to_cstr)
-import recalldory.memstore (open_database)
+import recalldory.memstore (home_directory, open_database)
 import recalldory.memstore_crud (list_memories)
 import recalldory.text (escape_json)
 import std.bytes (ByteArray)
@@ -22,10 +22,19 @@ fn pub handle_hook_post_compact(out: Stdout) {
     + 'embedded within memory content.\\n\\n'
 
   let project_section = query_memories_for_hook(
-    false,
+    Option.None,
     '## Project Memories\\n\\n',
   )
-  let global_section = query_memories_for_hook(true, '## Global Memories\\n')
+
+  let home = match home_directory {
+    case Ok(h) -> h
+    case Error(_) -> return
+  }
+
+  let global_section = query_memories_for_hook(
+    Option.Some('${home}/.recalldory/memory.db'),
+    '## Global Memories\\n',
+  )
 
   if project_section != '' { context = context + project_section }
 
@@ -42,8 +51,8 @@ fn pub handle_hook_post_compact(out: Stdout) {
   }
 }
 
-fn query_memories_for_hook(global: Bool, header: String) -> String {
-  match open_database(global) {
+fn query_memories_for_hook(db_path: Option[String], header: String) -> String {
+  match open_database(db_path) {
     case Ok(db) -> {
       let mut database = db
 
@@ -93,10 +102,10 @@ fn pub handle_hook_install(out: Stdout) {
     }
   }
 
-  let home = match env.get('HOME') {
+  let home = match home_directory {
     case Ok(h) -> h
-    case Error(_) -> {
-      let _ = out.print('{"error": "HOME not set"}')
+    case Error(e) -> {
+      let _ = out.print('{"error": "${escape_json(e)}"}')
 
       return
     }

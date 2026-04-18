@@ -1,25 +1,31 @@
 import recalldory.db (Database, init_schema, migrate_schema)
 import std.env
 
-# Open (or create) the memory database. If global is true, uses ~/.recalldory/memory.db;
-# otherwise uses ./.recalldory/memory.db. Runs schema init and migrations.
-fn pub open_database(global: Bool) -> Result[Database, String] {
-  let path = if global {
-    let home = match env.get('HOME') {
-      case Ok(h) -> h
-      case Error(_) -> return Result.Error('HOME not set')
+# Resolve the home directory across platforms (HOME on Unix, USERPROFILE on Windows).
+fn pub home_directory -> Result[String, String] {
+  match env.get('HOME') {
+    case Ok(h) -> Result.Ok(h)
+    case Error(_) -> {
+      match env.get('USERPROFILE') {
+        case Ok(u) -> Result.Ok(u)
+        case Error(_) -> Result.Error('HOME and USERPROFILE not set')
+      }
     }
-    let dir = '${home}/.recalldory'.to_path
+  }
+}
 
-    let _ = dir.create_directory
+# Open (or create) the memory database. If db_path is Some, uses that path.
+# Otherwise uses ./.recalldory/memory.db. Runs schema init and migrations.
+fn pub open_database(db_path: Option[String]) -> Result[Database, String] {
+  let path = match db_path {
+    case Some(p) -> p
+    case None -> {
+      let dir = '.recalldory'.to_path
 
-    '${home}/.recalldory/memory.db'
-  } else {
-    let dir = '.recalldory'.to_path
+      let _ = dir.create_directory
 
-    let _ = dir.create_directory
-
-    './.recalldory/memory.db'
+      './.recalldory/memory.db'
+    }
   }
 
   let db = match Database.new(path) {

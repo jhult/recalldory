@@ -26,14 +26,17 @@ type async Main {
 
     match parse_args {
       case Some(parsed) -> {
-        let global = parsed.global
+        let db_path = match parsed.db_path {
+          case Some(p) -> Option.Some(p)
+          case None -> Option.None
+        }
         let cmd = parsed.into_command
 
         match cmd {
           case Help -> print_help(out)
           case HookPostCompact -> handle_hook_post_compact(out)
           case HookInstall -> handle_hook_install(out)
-          case Db(db_cmd) -> run_with_db(db_cmd, global, out)
+          case Db(db_cmd) -> run_with_db(db_cmd, db_path, out)
         }
       }
       case None -> print_help(out)
@@ -41,8 +44,8 @@ type async Main {
   }
 }
 
-fn run_with_db(cmd: DbCommand, global: Bool, out: Stdout) {
-  match open_database(global) {
+fn run_with_db(cmd: DbCommand, db_path: Option[String], out: Stdout) {
+  match open_database(db_path) {
     case Ok(db) -> {
       let mut database = db
 
