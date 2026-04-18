@@ -17,7 +17,7 @@ sequenceDiagram
     participant You
     participant Claude
     participant Recalldory
-    participant DB as .recalldory/memory.db
+    participant DB as .recalldory/recalldory.db
 
     Note over You,DB: Session 1: Learning
     You->>Claude: Work on a task
@@ -109,7 +109,7 @@ recalldory hook install
 
 | Command | Description |
 |---------|-------------|
-| `hook install` | Install post-compact hook into `~/.claude/settings.json` |
+| `hook install` | Install post-compact hook into `$HOME/.claude/settings.json` |
 | `hook post-compact` | Run by hook to inject memories (usually automatic) |
 
 ## Design Decisions
@@ -126,9 +126,16 @@ recalldory hook install
 
 ## Data Storage
 
-Memories are stored in `.recalldory/memory.db` (SQLite with FTS5).
+Memories are stored in [SQLite](https://www.sqlite.org/) databases with [FTS5](https://www.sqlite.org/fts5.html).
 
-Use `--db-path PATH` to specify a custom database location. For cross-project memories, use `$HOME/.recalldory/memory.db` (Unix) or `$USERPROFILE/.recalldory/memory.db` (Windows).
+| Scope | Default Path | Override |
+|-------|-------------|----------|
+| Project | `./.recalldory/recalldory.db` | `RECALLDORY_DB_PATH` |
+| Global | `$HOME/.recalldory/recalldory.db` (Unix) or `$USERPROFILE/.recalldory/recalldory.db` (Windows) | `RECALLDORY_GLOBAL_DB_PATH` |
+
+`recall` and `list` search both databases and merge results. `add` writes to the project database by default; use `--scope global` to write to the global database. ID-based commands (`forget`, `pin`, `unpin`, `feedback`) try the project database first, falling back to global. `stats`, `maintain`, and `rebuild-fts` operate on both databases.
+
+If a legacy `memory.db` exists, it is automatically renamed to `recalldory.db` on first access.
 
 ## For AI Agents
 
@@ -144,7 +151,7 @@ A Claude Code skill is included at `.claude/skills/recalldory/` and is loaded au
 - Adding memories is the *user's* decision. Never auto-add.
 - Use `recall` to find relevant context before starting work.
 - If the user asks you to remember something, use `recalldory add "<content>"`.
-- Memories are project-scoped by default; use `--global` for cross-project knowledge.
+- Memories are project-scoped by default; use `--scope global` for cross-project knowledge.
 
 **Ready-to-paste for CLAUDE.md**:
 ```markdown

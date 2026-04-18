@@ -19,7 +19,7 @@ description: >-
 | **NEVER auto-add memories** | Explicit curation avoids noise; only add when user asks |
 | **Always `recall` before starting work** | Relevant context may already be stored |
 | **All output is JSON** | Parse `--json` output; do not screen-scrape |
-| **Project scope is default** | Use `--global` only for cross-project knowledge |
+| **Project scope is default** | Use `--scope global` only for cross-project knowledge |
 
 ## When to Use recalldory
 
@@ -114,8 +114,8 @@ recalldory stats        # Show memory count, decay stats, anti-patterns
 
 | Scope | Storage | Use For |
 |-------|---------|---------|
-| `project` (default) | `.recalldory/memory.db` | Project-specific context |
-| `global` | `~/.recalldory/memory.db` | Cross-project knowledge, universal patterns |
+| `project` (default) | `./.recalldory/recalldory.db` | Project-specific context |
+| `global` | `$HOME/.recalldory/recalldory.db` | Cross-project knowledge, universal patterns |
 
 ## Standard Workflow
 
@@ -170,4 +170,5 @@ The post-compact hook automatically surfaces recent memories when context compac
 - Adding low-signal observations ("the build ran successfully")
 - Forgetting to `recall` before starting new work
 - Using `global` scope for project-specific knowledge
+- Assuming `recall`/`list` only searches one database — they always search both project and global
 - Adding duplicate memories (recalldory uses SimHash deduplication, but avoid anyway)
