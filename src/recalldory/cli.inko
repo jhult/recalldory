@@ -152,10 +152,9 @@ type pub enum Command {
   case Db(DbCommand)
 }
 
-# Result of parsing CLI arguments: the resolved command and optional database path.
+# Result of parsing CLI arguments: the resolved command.
 type pub ParsedArgs {
   let pub @command: Command
-  let pub @db_path: Option[String]
 }
 
 impl ParsedArgs {
@@ -168,7 +167,6 @@ impl ParsedArgs {
 # Parse CLI arguments into a ParsedArgs. Returns None if help should be shown.
 fn pub parse_args -> Option[ParsedArgs] {
   let raw_args = env.arguments
-  let mut db_path: Option[String] = Option.None
   let mut help = false
   let mut args: Array[String] = []
   let mut i = 0
@@ -176,14 +174,7 @@ fn pub parse_args -> Option[ParsedArgs] {
   while i < raw_args.size {
     match raw_args.get(i) {
       case Ok(arg) -> {
-        if arg == '--db-path' {
-          i = i + 1
-
-          match raw_args.get(i) {
-            case Ok(path) -> db_path = Option.Some(path.clone)
-            case Error(_) -> return Option.None
-          }
-        } else if arg == '--help' or arg == '-h' {
+        if arg == '--help' or arg == '-h' {
           help = true
         } else {
           args.push(arg.clone)
@@ -195,10 +186,8 @@ fn pub parse_args -> Option[ParsedArgs] {
     i = i + 1
   }
 
-  let frozen_path = db_path
-
   if help or args.size < 1 {
-    return Option.Some(ParsedArgs(command: Command.Help, db_path: frozen_path))
+    return Option.Some(ParsedArgs(command: Command.Help))
   }
 
   let cmd = match args.get(0) {
@@ -229,10 +218,8 @@ fn pub parse_args -> Option[ParsedArgs] {
   }
 
   match cmd {
-    case Some(c) -> Option.Some(ParsedArgs(command: c, db_path: frozen_path))
-    case None -> {
-      Option.Some(ParsedArgs(command: Command.Help, db_path: Option.None))
-    }
+    case Some(c) -> Option.Some(ParsedArgs(command: c))
+    case None -> Option.Some(ParsedArgs(command: Command.Help))
   }
 }
 
@@ -496,7 +483,7 @@ fn parse_contradictions(args: Array[String]) -> Option[Command] {
 
 fn pub print_help(out: Stdout) {
   let _ = out.print('recalldory - persistent memory for AI coding assistants\n')
-  let _ = out.print('Usage: recalldory <command> [options] [--db-path PATH]\n')
+  let _ = out.print('Usage: recalldory <command> [options]\n')
   let _ = out.print('\nCommands:')
   let _ = out.print(
     '  add <content> [--tags T] [--scope S] [--pin]   Add a memory',
@@ -556,10 +543,11 @@ fn pub print_help(out: Stdout) {
     '  hook post-compact                               Post-compact hook',
   )
   let _ = out.print('\nOptions:')
+  let _ = out.print('\nEnvironment variables:')
   let _ = out.print(
-    '  --db-path PATH   Database path (default: .recalldory/memory.db)',
+    '  RECALLDORY_DB_PATH         Project database path (default: .recalldory/recalldory.db)',
   )
   let _ = out.print(
-    '                   For cross-project memories: $HOME/.recalldory/memory.db',
+    '  RECALLDORY_GLOBAL_DB_PATH  Global database path (default: $HOME/.recalldory/recalldory.db)',
   )
 }

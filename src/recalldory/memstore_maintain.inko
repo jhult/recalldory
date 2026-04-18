@@ -113,7 +113,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
 
 # Return aggregate memory statistics (total, active, pinned, anti-pattern, avg strength).
 fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
-  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = '${STATUS_ACTIVE}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_PINNED}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_ANTI_PATTERN}' THEN 1 ELSE 0 END), AVG(strength) FROM memories"
+  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = '${STATUS_ACTIVE}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_PINNED}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_ANTI_PATTERN}' THEN 1 ELSE 0 END), SUM(strength), COUNT(*) FROM memories"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -126,7 +126,8 @@ fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
         active: stmt.column_int(1),
         pinned: stmt.column_int(2),
         anti_pattern: stmt.column_int(3),
-        avg_strength: stmt.column_double(4),
+        total_strength: stmt.column_int(4),
+        count: stmt.column_int(5),
       ),
     )
   } else {

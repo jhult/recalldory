@@ -121,7 +121,8 @@ type pub MemoryStats {
   let pub @active: Int
   let pub @pinned: Int
   let pub @anti_pattern: Int
-  let pub @avg_strength: Float64
+  let pub @total_strength: Int
+  let pub @count: Int
 }
 
 # Result of a bulk import operation (imported count, failed count, first error).
@@ -142,6 +143,54 @@ fn pub output_memories(memories: Array[Memory], out: Stdout) {
   let mut results: Array[Json] = []
 
   for memory in memories.iter {
+    let score = if (memory.similarity as Float) > 0.0 {
+      memory.similarity
+    } else {
+      memory.strength
+    }
+    let mut obj: Map[String, Json] = Map.new
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('summary', Json.String(memory.content))
+    obj.set('score', Json.Float(score as Float))
+    obj.set('tags', Json.String(memory.tags))
+    obj.set('status', Json.String(memory.status))
+    obj.set('negative_flag', Json.Bool(memory.xflag))
+    results.push(Json.Object(obj))
+  }
+
+  let mut root: Map[String, Json] = Map.new
+
+  root.set('results', Json.Array(results))
+  out.print(Json.Object(root).to_string)
+}
+
+# Output memories from two databases as a single merged JSON results array.
+fn pub output_merged_memories(
+  project_mems: Array[Memory],
+  global_mems: Array[Memory],
+  out: Stdout,
+) {
+  let mut results: Array[Json] = []
+
+  for memory in project_mems.iter {
+    let score = if (memory.similarity as Float) > 0.0 {
+      memory.similarity
+    } else {
+      memory.strength
+    }
+    let mut obj: Map[String, Json] = Map.new
+
+    obj.set('id', Json.Int(memory.id))
+    obj.set('summary', Json.String(memory.content))
+    obj.set('score', Json.Float(score as Float))
+    obj.set('tags', Json.String(memory.tags))
+    obj.set('status', Json.String(memory.status))
+    obj.set('negative_flag', Json.Bool(memory.xflag))
+    results.push(Json.Object(obj))
+  }
+
+  for memory in global_mems.iter {
     let score = if (memory.similarity as Float) > 0.0 {
       memory.similarity
     } else {

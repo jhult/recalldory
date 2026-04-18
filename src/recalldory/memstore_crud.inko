@@ -417,7 +417,7 @@ fn pub list_memories(
   scope_filter: String,
   status_filter: String,
   limit: Int,
-  older_than: Option[Int],
+  older_than: ref Option[Int],
 ) -> Result[Array[Memory], String] {
   let mut sql = 'SELECT ${MEMORY_COLUMNS} FROM memories WHERE 1=1'
 

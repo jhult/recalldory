@@ -1,5 +1,8 @@
 import recalldory.db (Database, init_schema, migrate_schema)
 import std.env
+import std.fs.file (ReadOnlyFile)
+
+fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
 
 # Resolve the home directory across platforms (HOME on Unix, USERPROFILE on Windows).
 fn pub home_directory -> Result[String, String] {
@@ -14,19 +17,86 @@ fn pub home_directory -> Result[String, String] {
   }
 }
 
-# Open (or create) the memory database. If db_path is Some, uses that path.
-# Otherwise uses ./.recalldory/memory.db. Runs schema init and migrations.
-fn pub open_database(db_path: Option[String]) -> Result[Database, String] {
-  let path = match db_path {
-    case Some(p) -> p
-    case None -> {
-      let dir = '.recalldory'.to_path
+# Resolve the project database path. Checks RECALLDORY_DB_PATH env var first,
+# then falls back to ./.recalldory/recalldory.db.
+fn pub project_db_path -> Result[String, String] {
+  match env.get('RECALLDORY_DB_PATH') {
+    case Ok(p) -> Result.Ok(p)
+    case Error(_) -> Result.Ok('./.recalldory/recalldory.db')
+  }
+}
 
-      let _ = dir.create_directory
+# Resolve the global database path. Checks RECALLDORY_GLOBAL_DB_PATH env var first,
+# then falls back to $HOME/.recalldory/recalldory.db (or $USERPROFILE on Windows).
+fn pub global_db_path -> Result[String, String] {
+  match env.get('RECALLDORY_GLOBAL_DB_PATH') {
+    case Ok(p) -> Result.Ok(p)
+    case Error(_) -> {
+      let home = match home_directory {
+        case Ok(h) -> h
+        case Error(e) -> return Result.Error(e)
+      }
 
-      './.recalldory/memory.db'
+      Result.Ok('${home}/.recalldory/recalldory.db')
     }
   }
+}
+
+# Ensure the parent directory for a database path exists.
+fn ensure_parent_dir(db_path: String) {
+  # Extract directory portion from path string.
+  let mut dir = ''
+  let bytes = db_path.to_byte_array
+  let mut i = bytes.size - 1
+
+  # Walk backwards to find the last '/'
+  while i >= 0 {
+    match bytes.get(i) {
+      case Ok(b) if b == 47 -> {
+        # 47 is '/'
+        dir = db_path.substring(0, i)
+        break
+      }
+      case _ -> {}
+    }
+
+    i = i - 1
+  }
+
+  if dir != '' { let _ = dir.to_path.create_directory }
+}
+
+# Migrate from old memory.db to recalldory.db for a given base directory.
+# Does nothing if the new file already exists or the old file doesn't.
+fn migrate_legacy_db(base_dir: String) {
+  let new_path = '${base_dir}/recalldory.db'
+  let old_path = '${base_dir}/memory.db'
+
+  # Check if new file exists
+  match ReadOnlyFile.new(new_path.to_path) {
+    case Ok(_) -> return
+    case Error(_) -> {}
+  }
+
+  # Check if old file exists
+  match ReadOnlyFile.new(old_path.to_path) {
+    case Ok(_) -> {
+      let mut old_bytes = old_path.to_byte_array
+      let mut new_bytes = new_path.to_byte_array
+
+      old_bytes.push(0)
+      new_bytes.push(0)
+
+      let _ = rename(old_bytes.pointer, new_bytes.pointer)
+    }
+    case Error(_) -> {}
+  }
+}
+
+# Open (or create) the database at the given path.
+# Runs schema init and migrations.
+fn pub open_database(path: String) -> Result[Database, String] {
+  ensure_parent_dir(path)
 
   let db = match Database.new(path) {
     case Ok(d) -> d
@@ -69,4 +139,33 @@ fn pub open_database(db_path: Option[String]) -> Result[Database, String] {
   }
 
   Result.Ok(db)
+}
+
+# Open the project database, migrating from legacy memory.db if needed.
+fn pub open_project_database -> Result[Database, String] {
+  let path = match project_db_path {
+    case Ok(p) -> p
+    case Error(e) -> return Result.Error(e)
+  }
+
+  migrate_legacy_db('.recalldory')
+
+  open_database(path)
+}
+
+# Open the global database, migrating from legacy memory.db if needed.
+fn pub open_global_database -> Result[Database, String] {
+  let path = match global_db_path {
+    case Ok(p) -> p
+    case Error(e) -> return Result.Error(e)
+  }
+
+  let home = match home_directory {
+    case Ok(h) -> h
+    case Error(e) -> return Result.Error(e)
+  }
+
+  migrate_legacy_db('${home}/.recalldory')
+
+  open_database(path)
 }
