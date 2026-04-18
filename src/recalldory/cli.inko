@@ -557,6 +557,9 @@ fn pub print_help(out: Stdout) {
   )
   let _ = out.print('\nOptions:')
   let _ = out.print(
-    '  --db-path PATH   Use custom database path (default: .recalldory/memory.db)',
+    '  --db-path PATH   Database path (default: .recalldory/memory.db)',
+  )
+  let _ = out.print(
+    '                   For cross-project memories: $HOME/.recalldory/memory.db',
   )
 }

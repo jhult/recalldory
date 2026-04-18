@@ -128,7 +128,7 @@ recalldory hook install
 
 Memories are stored in `.recalldory/memory.db` (SQLite with FTS5).
 
-Use `--global` flag to use `~/.recalldory/memory.db` instead.
+Use `--db-path PATH` to specify a custom database location. For cross-project memories, use `$HOME/.recalldory/memory.db` (Unix) or `$USERPROFILE/.recalldory/memory.db` (Windows).
 
 ## For AI Agents
 
