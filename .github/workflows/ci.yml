@@ -153,12 +153,16 @@ jobs:
               --linker-arg "-target" \
               --linker-arg "x86_64-apple-macosx11.0" \
               --linker-arg "-L$PWD/lib" \
+              --linker-arg "-force_load" \
+              --linker-arg "$PWD/lib/libsqlite3.a" \
               --linker-arg "-F${SDK_PATH}/System/Library/Frameworks" \
               src/recalldory.inko
           else
             # Native arm64: use default linker
             inko build --release --target "$TARGET" \
               --linker-arg "-L$PWD/lib" \
+              --linker-arg "-force_load" \
+              --linker-arg "$PWD/lib/libsqlite3.a" \
               src/recalldory.inko
           fi
 

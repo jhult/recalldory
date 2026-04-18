@@ -55,11 +55,18 @@ Download the latest release for your platform from the [Releases page](https://g
 | `recalldory-amd64-mac-native` | macOS x86_64 |
 | `recalldory-arm64-mac-native` | macOS Apple Silicon |
 
+[SQLite](https://www.sqlite.org/) is statically linked into all binaries. [Apple does not guarantee binary compatibility at the kernel syscall level](https://developer.apple.com/library/archive/qa/1118/_index.html), so macOS builds still dynamically link system libraries (libSystem, Security, CoreFoundation), but SQLite is embedded via `-force_load`.
+
 ### Build from source
 
 ```bash
-# Requires Inko 0.19.1
-inko build --release
+# Requires [Inko commit abca5b6](https://github.com/inko-lang/inko/commit/abca5b6beae2914602a1a353efc899e2cb3ad877) and Zig
+scripts/build-sqlite.sh arm64-mac-native  # or your target triple
+inko build --release \
+  --linker-arg "-L$PWD/lib" \
+  --linker-arg "-force_load" \
+  --linker-arg "$PWD/lib/libsqlite3.a" \
+  src/recalldory.inko
 ```
 
 ### Setup
@@ -114,7 +121,7 @@ recalldory hook install
 | Decay for ranking, not deletion | Rare edge cases ("avoid v2.3 bug") shouldn't be lost to time |
 | 3+ harmful marks → anti-pattern | Requires consensus before treating as "never do this" |
 | Pinning exempts from all decay | Important memories stay forever |
-| SQLite + FTS5 | Simple, fast, no external dependencies |
+| SQLite + [FTS5](https://www.sqlite.org/fts5.html) | Simple, fast, no external dependencies |
 | Scope (project/global) | Keep project-specific knowledge separate from universal patterns |
 
 ## Data Storage
