@@ -84,9 +84,10 @@ recalldory hook install
 |---------|-------------|
 | `add <content> [--tags T] [--scope S] [--pin]` | Store a memory (optionally pin it) |
 | `recall <query> [--scope S] [--top N]` | Full-text search with BM25 ranking |
-| `list [--scope S] [--status S] [--limit N]` | List memories by scope/status |
+| `list [--scope S] [--status S] [--limit N] [--older-than N]` | List memories by scope/status |
+| `update <id> [content] [--content C] [--tags T]` | Correct a memory in place |
 | `forget <id>` | Delete a memory |
-| `feedback <id> helpful\|harmful` | Mark memory quality |
+| `feedback <id> helpful\|harmful` | Flag memory quality |
 
 ### Memory Lifecycle
 
@@ -94,12 +95,14 @@ recalldory hook install
 |---------|-------------|
 | `pin <id>` | Protect from decay/deletion (for important memories) |
 | `unpin <id>` | Remove pin protection |
+| `history <id>` | Show edit history for a memory |
 | `maintain [--dry-run]` | Run decay, anti-pattern promotion, and pruning |
 
 ### Data Management
 
 | Command | Description |
 |---------|-------------|
+| `contradictions [--resolve <id>]` | Detect potential contradictions between memories |
 | `export` | Full JSON backup of all memories |
 | `import <file>` | Restore from JSON backup |
 | `agents-md [--path P]` | Generate AGENTS.md from pinned + anti-pattern memories |
@@ -112,12 +115,21 @@ recalldory hook install
 | `hook install` | Install post-compact hook into `$HOME/.claude/settings.json` |
 | `hook post-compact` | Run by hook to inject memories (usually automatic) |
 
+## Usage Patterns
+
+**Prefer `update` over `forget`+`add`.** When a memory needs correction, `update` preserves the edit history (the old version is marked superseded). Running `forget` then `add` destroys that history.
+
+**Use `recall` before `add` to avoid duplicates.** Search for existing memories on the same topic before adding a new one. If a match exists, `update` it instead.
+
+**`feedback harmful` is for flagging, not deleting.** Marking a memory harmful makes it visible as a warning (e.g., "don't do X"). It is not a pre-deletion step before `forget`. Use `forget` directly to remove a memory, or `feedback harmful` to turn it into an anti-pattern that others should avoid.
+
 ## Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
 | Manual add only | LLM-generated "important" memories are noisy; explicit curation is reliable |
 | No automatic extraction | Avoids memory bloat from trivial observations |
+| `update` preserves history | Old versions are superseded, not destroyed — corrections are traceable |
 | Decay for ranking, not deletion | Rare edge cases ("avoid v2.3 bug") shouldn't be lost to time |
 | 3+ harmful marks → anti-pattern | Requires consensus before treating as "never do this" |
 | Pinning exempts from all decay | Important memories stay forever |
