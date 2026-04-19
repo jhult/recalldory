@@ -115,14 +115,6 @@ recalldory hook install
 | `hook install` | Install post-compact hook into `$HOME/.claude/settings.json` |
 | `hook post-compact` | Run by hook to inject memories (usually automatic) |
 
-## Usage Patterns
-
-**Prefer `update` over `forget`+`add`.** When a memory needs correction, `update` preserves the edit history (the old version is marked superseded). Running `forget` then `add` destroys that history.
-
-**Use `recall` before `add` to avoid duplicates.** Search for existing memories on the same topic before adding a new one. If a match exists, `update` it instead.
-
-**`feedback harmful` is for flagging, not deleting.** Marking a memory harmful makes it visible as a warning (e.g., "don't do X"). It is not a pre-deletion step before `forget`. Use `forget` directly to remove a memory, or `feedback harmful` to turn it into an anti-pattern that others should avoid.
-
 ## Design Decisions
 
 | Decision | Rationale |
