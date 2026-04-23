@@ -42,7 +42,17 @@ sequenceDiagram
 
 ## Installation
 
-### Pre-built binaries
+### Install script (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jhult/recalldory/trunk/install.sh | bash
+```
+
+This downloads the latest binary for your platform, installs the Claude Code skill to `~/.claude/skills/recalldory/`, adds `~/.local/bin` to your PATH (if needed), and runs `recalldory hook install`. Re-running upgrades to the latest version.
+
+Options: `--prefix DIR` (default: `~/.local`), `--target TARGET` (override platform detection), `--skip-hook`, `--skip-skill`.
+
+### Manual download
 
 Download the latest release for your platform from the [Releases page](https://github.com/jhult/recalldory/releases).
 
@@ -57,6 +67,18 @@ Download the latest release for your platform from the [Releases page](https://g
 
 [SQLite](https://www.sqlite.org/) is statically linked into all binaries. [Apple does not guarantee binary compatibility at the kernel syscall level](https://developer.apple.com/library/archive/qa/1118/_index.html), so macOS builds still dynamically link system libraries (libSystem, Security, CoreFoundation), but SQLite is embedded via `-force_load`.
 
+Then install the Claude Code skill and post-compact hook:
+
+```bash
+# Skill (for global availability across projects)
+mkdir -p ~/.claude/skills/recalldory
+curl -fsSL -o ~/.claude/skills/recalldory/SKILL.md \
+  https://raw.githubusercontent.com/jhult/recalldory/trunk/.claude/skills/recalldory/SKILL.md
+
+# Hook (auto-injects memories after context compaction)
+recalldory hook install
+```
+
 ### Build from source
 
 ```bash
@@ -67,13 +89,6 @@ inko build --release \
   --linker-arg "-force_load" \
   --linker-arg "$PWD/lib/libsqlite3.a" \
   src/recalldory.inko
-```
-
-### Setup
-
-```bash
-# Install the post-compact hook (auto-injects memories after context compaction)
-recalldory hook install
 ```
 
 ## Commands
@@ -180,6 +195,7 @@ The following projects also provide persistent memory for AI agents (listed alph
 - **[Engram](https://codeberg.org/GhostFrame/engram)** (GhostFrame) - Cognitive layer for AI agents with FSRS-6 spaced repetition, personality extraction, and reasoning with contradiction detection.
 - **[Engram](https://github.com/Gentleman-Programming/engram)** (Gentleman-Programming) - Agent-agnostic Go binary with SQLite + FTS5 providing persistent memory via MCP server, HTTP API, CLI, and TUI.
 - **[Lavra](https://github.com/roberto-mello/lavra)** - A plugin with compound engineering workflows and memory for AI coding agents.
+- **[MemReader](https://arxiv.org/html/2604.07877v2)** - Active memory extraction models (MemReader-0.6B/4B) that decide whether to store, buffer, or discard information, trained with GRPO reinforcement learning. Validates the same memory-pollution problem recalldory solves, but automates curation with an LLM rather than deferring it to the user.
 - **[MnemoCore](https://github.com/RobinALG87/MnemoCore-Persistent-Cognitive-Ai-Memory)** - A persistent cognitive AI memory system.
 - **[Mnemoria](https://github.com/one-bit/mnemoria)** - Git-friendly memory storage for AI agents with hybrid semantic + full-text search and append-only binary format.
 - **[Smriti-MCP](https://github.com/tejzpr/Smriti-MCP)** - Graph-based memory for LLMs with EcphoryRAG-inspired multi-stage retrieval combining cue extraction, graph traversal, and vector similarity.
