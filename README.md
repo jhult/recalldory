@@ -1,14 +1,14 @@
 # `recalldory`
 
-A persistent memory system for AI coding assistants, written in [Inko](https://inko-lang.org/).
+A learning memory system for AI coding assistants - curated by you, persisted across sessions. Written in [Inko](https://inko-lang.org/).
 
-Named after **Dory**, the blue tang from *Finding Nemo* known for her short-term memory loss. Irony aside, `recalldory` helps AI assistants remember context across sessions—something Dory could only dream of. Just keep swimming, just keep recalling.
+Named after **Dory**, the blue tang from *Finding Nemo* known for her short-term memory loss. Irony aside, `recalldory` helps AI assistants remember context across sessions, something Dory could only dream of. Just keep swimming, just keep recalling.
 
 ## Mental Model
 
 **You curate, recalldory persists.**
 
-Adding memories is always manual — you decide what's worth remembering. Retrieval is automatic after context compaction via hooks; otherwise manual via `recall`. This explicit curation avoids the noise of LLM-generated "important" memories.
+Adding memories is always manual - you decide what's worth remembering. Retrieval is automatic after context compaction via hooks; otherwise manual via `recall`. This explicit curation avoids the noise of LLM-generated "important" memories.
 
 ## Workflow
 
@@ -136,12 +136,46 @@ inko build --release \
 |----------|-----------|
 | Manual add only | LLM-generated "important" memories are noisy; explicit curation is reliable |
 | No automatic extraction | Avoids memory bloat from trivial observations |
-| `update` preserves history | Old versions are superseded, not destroyed — corrections are traceable |
+| `update` preserves history | Old versions are superseded, not destroyed - corrections are traceable |
 | Decay for ranking, not deletion | Rare edge cases ("avoid v2.3 bug") shouldn't be lost to time |
 | 3+ harmful marks → anti-pattern | Requires consensus before treating as "never do this" |
 | Pinning exempts from all decay | Important memories stay forever |
 | SQLite + [FTS5](https://www.sqlite.org/fts5.html) | Simple, fast, no external dependencies |
 | Scope (project/global) | Keep project-specific knowledge separate from universal patterns |
+| No automatic relaxation | Anti-patterns can only be demoted manually. A system that only tightens [ratchets itself into brittleness](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) (see [Design Philosophy](#design-philosophy)); relaxation is planned but deliberate - users can `unpin` or `forget` to loosen constraints now |
+| Provenance is mostly implicit | Explicit curation ("you curate, recalldory persists") means ~80-90% of memories are user instructions with self-evident authority. A `--source` flag (planned) will handle the ~10-20% where origin adds signal: external references, verifiable claims, and reasons-not-just-rules |
+
+## Design Philosophy
+
+The following concepts are adapted from **Zbigniew Łukasiak**'s [commonplace](https://zby.github.io/commonplace/) knowledge base ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
+
+### Deploy-time learning
+
+Recalldory is a [deploy-time learning](https://zby.github.io/commonplace/notes/deploy-time-learning-is-the-missing-middle/) system. It sits between two well-recognized adaptation mechanisms - training (pre-deployment weight updates, durable but opaque) and in-context learning (ephemeral context, inspectable but evaporates at session end). Deploy-time learning provides durable, inspectable, versionable artifacts that evolve across sessions. A library of tips, schemas, tools, and tests accumulated across sessions can deliver behavior change at weight-update scale.
+
+### Constraining
+
+[Constraining](https://zby.github.io/commonplace/notes/definitions/constraining/) narrows the interpretation space - reducing the range of valid interpretations an underspecified spec admits. Recalldory implements constraining through:
+
+- **Deduplication** - SimHash near-duplicate detection collapses near-identical entries, committing to one interpretation
+- **Anti-pattern promotion** - 3+ harmful marks commits to "never do this," narrowing the agent's action space
+- **Contradiction detection** - flags opposing claims to prevent conflicting guidance
+
+The far end of constraining is [codification](https://zby.github.io/commonplace/notes/definitions/constraining/) - committing procedure to a symbolic medium where it becomes reliable, fast, and free of LLM interpretation. Recalldory's `agents-md` command converts accumulated memories into injected system instructions, moving along this gradient.
+
+### Distillation
+
+Distillation extracts focused artifacts from larger reasoning. Recalldory's `agents-md` command distills pinned memories and anti-patterns into a focused instruction file - re-compressing accumulated reasoning into a task-ready artifact. This is not just retrieval; it's directed context compression that produces something the source memories alone are not. (Constraining and distillation are orthogonal - `agents-md` serves both: constraining by committing memories to a fixed form, and distilling by extracting focused content from the full set.)
+
+### Codification gradient
+
+Memories can move along a gradient from observation to deterministic code (simplified from [commonplace](https://zby.github.io/commonplace/notes/definitions/constraining/), which includes intermediate verification stages like checklists and tests):
+
+```
+observation -> curated note -> instruction -> system definition -> deterministic code
+```
+
+Pinning promotes a memory to "always important." Anti-patterns are codified constraints. `agents-md` converts memories into injected system instructions. The gradient is reversible - `unpin` or `forget` loosens a constraint, and `update` replaces a superseded memory with a new one while preserving the old version.
 
 ## Data Storage
 
@@ -164,7 +198,7 @@ A Claude Code skill is included at `.claude/skills/recalldory/` and is loaded au
 
 ### Other AI Assistants
 
-**Primary command**: `recalldory recall "<query>"` — Returns JSON with matching memories.
+**Primary command**: `recalldory recall "<query>"` - Returns JSON with matching memories.
 
 **Key behaviors**:
 - Adding memories is the *user's* decision. Never auto-add.
@@ -179,7 +213,7 @@ A Claude Code skill is included at `.claude/skills/recalldory/` and is loaded au
 This project uses recalldory for persistent memory across sessions.
 
 - Check memories before starting: `recalldory recall "<topic>"`
-- User explicitly adds memories — do not auto-add observations
+- User explicitly adds memories - do not auto-add observations
 - Hook auto-injects memories after context compaction
 ```
 
@@ -209,19 +243,19 @@ Note: [deepseek-ai/Engram](https://github.com/deepseek-ai/Engram) is a research 
 
 Some AI memory systems include features inspired by cognitive science. Here's why `recalldory` doesn't:
 
-**[FSRS-6](https://github.com/open-spaced-repetition/fsrs4anki) / [Spaced Repetition](https://en.wikipedia.org/wiki/Spaced_repetition)** — These algorithms model *human* [forgetting curves](https://en.wikipedia.org/wiki/Forgetting_curve) (biological memory decay). AI retrieval is binary: context is either in the prompt window or it isn't. There's no evidence spaced repetition improves AI memory retrieval.
+**[FSRS-6](https://github.com/open-spaced-repetition/fsrs4anki) / [Spaced Repetition](https://en.wikipedia.org/wiki/Spaced_repetition)** - These algorithms model *human* [forgetting curves](https://en.wikipedia.org/wiki/Forgetting_curve) (biological memory decay). AI retrieval is binary: context is either in the prompt window or it isn't. There's no evidence spaced repetition improves AI memory retrieval. [Commonplace](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) makes this precise: "memory is more than retrieval" but "generic memory item schemas are too weak" - each role fails differently and needs different quality contracts, not a one-size-fits-all forgetting curve.
 
-**[Sleep Consolidation](https://en.wikipedia.org/wiki/Memory_consolidation)** — The metaphor is lovely, but what's actually useful is just database hygiene: deduplication and merging. `recalldory` does this via SimHash near-duplicate detection during `add` operations.
+**[Sleep Consolidation](https://en.wikipedia.org/wiki/Memory_consolidation)** - The metaphor is lovely, but what's actually useful is just database hygiene: deduplication and merging. `recalldory` does this via SimHash near-duplicate detection during `add` operations. [Commonplace](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) notes that "learning is incomplete without forgetting and revision" but the useful part is deduplication and pruning, not a metaphor for sleep cycles.
 
-**Complex [Salience](https://en.wikipedia.org/wiki/Salience_(neuroscience)) Scoring** — LLM-generated importance scores are noisy and self-reinforcing. Simple access frequency + explicit feedback (helpful/harmful) is more robust and deterministic.
+**Complex [Salience](https://en.wikipedia.org/wiki/Salience_(neuroscience)) Scoring** - LLM-generated importance scores are noisy and self-reinforcing. Simple access frequency + explicit feedback (helpful/harmful) is more robust and deterministic. [Commonplace](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) frames this as "evaluate by effects, not existence" - counting memories written is not learning. Helpful/harmful feedback measures behavioral impact, which is the dimension that actually matters.
 
-**[Graph-Based Memory](https://en.wikipedia.org/wiki/Knowledge_graph) / Multi-Hop Association** — Theoretically interesting, but no benchmarks show it outperforms good similarity search. Entity extraction is noisy, and the implementation complexity is high for unclear payoff.
+**[Graph-Based Memory](https://en.wikipedia.org/wiki/Knowledge_graph) / Multi-Hop Association** - Theoretically interesting, but no benchmarks show it outperforms good similarity search. Entity extraction is noisy, and the implementation complexity is high for unclear payoff. The [comparative review](https://zby.github.io/commonplace/agent-memory-systems/agentic-memory-systems-comparative-review/) found that navigability and retrieval optimize for different things - but navigability adds value primarily for multi-hop reasoning that coding assistants rarely need.
 
-**Aggressive Decay-Based Deletion** — Decay is useful for *ranking* retrieval results, but dangerous for *deletion*. It can lose rare-but-critical edge cases (e.g., "don't use library X v2.3, it has a critical bug"). `recalldory` uses decay for ranking only — deletion requires explicit harmful feedback (3+ marks).
+**Aggressive Decay-Based Deletion** - Decay is useful for *ranking* retrieval results, but dangerous for *deletion*. It can lose rare-but-critical edge cases (e.g., "don't use library X v2.3, it has a critical bug"). `recalldory` uses decay for ranking only - deletion requires explicit harmful feedback (3+ marks). [Commonplace](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) agrees: "persistence and loading are separate decisions" - storing everything is safe when the retrieval layer handles prioritization.
 
-**Contradiction Detection** — Coding context rarely has true logical contradictions. Instead, you have updates ("we migrated to Postgres"), context-dependent rules, and preference drift. These create false positives. `recalldory` includes this feature but it's optional and low-priority. See [paraconsistent logic](https://en.wikipedia.org/wiki/Paraconsistent_logic) for how formal systems handle contradictions.
+**Contradiction Detection** - Coding context rarely has true logical contradictions. Instead, you have updates ("we migrated to Postgres"), context-dependent rules, and preference drift. These create false positives. `recalldory` includes this feature but it's optional and low-priority. See [paraconsistent logic](https://en.wikipedia.org/wiki/Paraconsistent_logic) for how formal systems handle contradictions. [Commonplace](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) notes that discovery extraction has "the weakest immediate oracle; value often only visible through later reuse" - contradictions in coding context are even weaker oracles than that.
 
-**What actually works**: Simple strength scoring, deduplication, scope separation, FTS + strength-based ranking, and explicit user feedback. Good database design beats cognitive science metaphors.
+**What actually works**: Simple strength scoring, deduplication, scope separation, FTS + strength-based ranking, and explicit user feedback. Good database design beats cognitive science metaphors. The [comparative review](https://zby.github.io/commonplace/agent-memory-systems/agentic-memory-systems-comparative-review/) validates this: progressive disclosure and minimal ingestion cost with retrieval-time reasoning are genuine convergences across independent systems.
 
 ## Relationship to Claude Code's Built-In Memory
 
@@ -233,4 +267,34 @@ Claude Code has its own memory system: `CLAUDE.md` files for manual instructions
 | **Injected** | Session start, always | Post-compact hook |
 | **Best for** | Working preferences, feedback, communication style | Project-specific technical discoveries, gotchas, decisions |
 
-The gray zone is project-level facts (e.g. "this project uses X library"), which could end up in both. In practice: let Claude Code memory handle *how to work with you*; use `recalldory` for *what you've learned about the project*. The explicit curation model is the key difference — Claude Code's AI decides what to save, which can be noisy. `recalldory` only saves what you explicitly ask it to remember.
+The gray zone is project-level facts (e.g. "this project uses X library"), which could end up in both. In practice: let Claude Code memory handle *how to work with you*; use `recalldory` for *what you've learned about the project*. The explicit curation model is the key difference - Claude Code's AI decides what to save, which can be noisy. `recalldory` only saves what you explicitly ask it to remember.
+
+## Scope & Boundaries
+
+The [11 needs framework](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) identifies what a complete agent memory system must address. Recalldory explicitly handles some, partially handles others, and deliberately delegates the rest. A realistic architecture should name which requirements are handled internally and which are delegated.
+
+| Need | Status | Rationale |
+|------|--------|-----------|
+| Create memory directly | **Handled** | Manual `add` with explicit curation |
+| Import external knowledge | **Partial** | `import`/`export` handles format-level exchange but not transformation from external knowledge into internal form (distillation and constraining of imported content remain manual) |
+| Preserve evidence without making it the next context | **Handled** | Superseded memories stay for traceability but are excluded from active results |
+| Trace-derived extraction | **Deliberately excluded** | LLM-generated "important" memories are noisy; manual curation is more reliable |
+| Serve multiple consumers | **Partial** | JSON output serves agents; `agents-md` serves humans; no multi-agent coordination |
+| Activate behavior-changing memory before the mistake | **Partial** | Post-compact hook is one activation method; no on-situation loading (e.g., loading testing memories when the agent is about to write tests) |
+| Promote only when future value exceeds maintenance cost | **Handled** | Pin, anti-pattern promotion, and decay-based pruning each have explicit cost thresholds |
+| Keep derived views from drifting | **Delegated** | `agents-md` generates a view from memories. The file says "do not edit manually" and should be regenerated when memories change. Individual memory provenance (`--source`) is a planned feature |
+| Retire, redact, supersede, and relax | **Partial** | Forget, superseded status, and decay handle retirement and supersession. Relaxation (automatic demotion of anti-patterns when evidence changes) is manual only |
+| Make authority explicit | **Handled** | Manual add means user authority by definition; the [agency model](https://zby.github.io/commonplace/agent-memory-systems/agentic-memory-systems-comparative-review/) choice (who decides what to remember) is the most consequential architectural decision, and recalldory chooses the user |
+| Evaluate by effects, not existence | **Partial** | Helpful/harmful feedback measures behavioral impact, but there is no automated behavioral testing of whether activated memory actually changes downstream action |
+
+## References & Acknowledgments
+
+The design philosophy, scope & boundaries, and "Why Not" sections draw on ideas from **Zbigniew Łukasiak**'s [commonplace](https://zby.github.io/commonplace/) knowledge base, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Key concepts adapted:
+
+- **Deploy-time learning** - [Deploy-time learning is the missing middle](https://zby.github.io/commonplace/notes/deploy-time-learning-is-the-missing-middle/)
+- **Constraining & distillation** - [Constraining](https://zby.github.io/commonplace/notes/definitions/constraining/), [Designing agent memory systems](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/)
+- **11 needs framework** - [Designing agent memory systems](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/)
+- **Agency model, convergence patterns** - [Agentic memory systems: a comparative review](https://zby.github.io/commonplace/agent-memory-systems/agentic-memory-systems-comparative-review/)
+- **Agent memory systems survey** - [Agent memory systems](https://zby.github.io/commonplace/agent-memory-systems/)
+
+Ideas have been adapted and applied to recalldory's specific design; any misrepresentations are recalldory's, not commonplace's.
