@@ -16,27 +16,27 @@ Adding memories is always manual - you decide what's worth remembering. Retrieva
 sequenceDiagram
     participant You
     participant Claude
-    participant Recalldory
+    participant recalldory
     participant DB as .recalldory/recalldory.db
 
     Note over You,DB: Session 1: Learning
     You->>Claude: Work on a task
-    You->>Recalldory: add "important discovery"
-    Recalldory->>DB: Store memory
+    You->>recalldory: add "important discovery"
+    recalldory->>DB: Store memory
     Claude->>Claude: Context fills up...
     Claude->>Claude: Compact context
-    Claude->>Recalldory: hook post-compact
-    Recalldory->>DB: List recent memories
-    DB-->>Recalldory: Memories
-    Recalldory-->>Claude: Inject as context
+    Claude->>recalldory: hook post-compact
+    recalldory->>DB: List recent memories
+    DB-->>recalldory: Memories
+    recalldory-->>Claude: Inject as context
 
     Note over You,DB: Session 2: Recalling
     You->>Claude: New session starts
     Claude->>Claude: Context compacts
-    Claude->>Recalldory: hook post-compact
-    Recalldory->>DB: List recent memories
-    DB-->>Recalldory: Memories (including "important discovery")
-    Recalldory-->>Claude: Inject as context
+    Claude->>recalldory: hook post-compact
+    recalldory->>DB: List recent memories
+    DB-->>recalldory: Memories (including "important discovery")
+    recalldory-->>Claude: Inject as context
     Claude-->>You: Remembers previous session
 ```
 
