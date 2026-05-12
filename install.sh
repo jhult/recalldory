@@ -44,6 +44,10 @@ Examples:
   curl -fsSL https://raw.githubusercontent.com/jhult/recalldory/trunk/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/jhult/recalldory/trunk/install.sh | bash -s -- --prefix /usr/local
   ./install.sh --target amd64-linux-musl
+
+After installation, initialize each project:
+  cd /path/to/your/project
+  recalldory init
 EOF
 }
 
@@ -217,3 +221,4 @@ if [ "$SKIP_HOOK" = false ]; then
 fi
 
 printf "\n${BOLD}recalldory %s installed!${RESET}\n" "$TAG"
+printf "\nNext: initialize your project with ${GREEN}recalldory init${RESET}\n"
