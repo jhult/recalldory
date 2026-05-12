@@ -149,6 +149,7 @@ type pub enum Command {
   case Help
   case HookPostCompact
   case HookInstall
+  case Init(Bool)
   case Db(DbCommand)
 }
 
@@ -207,6 +208,7 @@ fn pub parse_args -> Option[ParsedArgs] {
         case 'export' -> Option.Some(Command.Db(DbCommand.Export))
         case 'import' -> parse_import(args)
         case 'hook' -> parse_hook(args)
+        case 'init' -> parse_init(args)
         case 'update' -> parse_update(args)
         case 'history' -> parse_history(args)
         case 'contradictions' -> parse_contradictions(args)
@@ -376,6 +378,13 @@ fn parse_hook(args: Array[String]) -> Option[Command] {
   }
 }
 
+fn parse_init(args: Array[String]) -> Option[Command] {
+  let parser = FlagParser.new(args, 1)
+  let no_gitignore = parser.bool_flag('--no-gitignore')
+
+  Option.Some(Command.Init(no_gitignore))
+}
+
 fn pub int_parse(s: String) -> Option[Int] {
   let mut result: Int = 0
   let mut valid = false
@@ -541,6 +550,9 @@ fn pub print_help(out: Stdout) {
   )
   let _ = out.print(
     '  hook post-compact                               Post-compact hook',
+  )
+  let _ = out.print(
+    '  init [--no-gitignore]                           Initialize project (add .recalldory to .gitignore)',
   )
   let _ = out.print('\nOptions:')
   let _ = out.print('\nEnvironment variables:')
