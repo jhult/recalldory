@@ -79,6 +79,23 @@ curl -fsSL -o ~/.claude/skills/recalldory/SKILL.md \
 recalldory hook install
 ```
 
+### Project Initialization
+
+Initialize each project with recalldory to add `.recalldory/` to your project's `.gitignore`:
+
+```bash
+cd /path/to/your/project
+recalldory init
+```
+
+This ensures the project-local database directory (`.recalldory/`) is not committed to version control, since each user/machine should have their own memories. To skip `.gitignore` modifications (e.g., if using a different approach), use `--no-gitignore`:
+
+```bash
+recalldory init --no-gitignore
+```
+
+The `init` command is idempotent and safe to run multiple times.
+
 ### Build from source
 
 ```bash
@@ -142,6 +159,7 @@ inko build --release \
 | Pinning exempts from all decay | Important memories stay forever |
 | SQLite + [FTS5](https://www.sqlite.org/fts5.html) | Simple, fast, no external dependencies |
 | Scope (project/global) | Keep project-specific knowledge separate from universal patterns |
+| `.recalldory/` not committed | Project database is user/machine-specific, not shared code - version control holds code and documentation, not AI-assistant metadata |
 | No automatic relaxation | Anti-patterns can only be demoted manually. A system that only tightens [ratchets itself into brittleness](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) (see [Design Philosophy](#design-philosophy)); relaxation is planned but deliberate - users can `unpin` or `forget` to loosen constraints now |
 | Provenance is mostly implicit | Explicit curation ("you curate, recalldory persists") means ~80-90% of memories are user instructions with self-evident authority. A `--source` flag (planned) will handle the ~10-20% where origin adds signal: external references, verifiable claims, and reasons-not-just-rules |
 
