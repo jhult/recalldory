@@ -1,14 +1,17 @@
+import recalldory.db (to_cstr)
+import recalldory.text (escape_json)
 import std.fs.file (ReadOnlyFile, WriteOnlyFile)
 import std.stdio (Stdout)
-import recalldory.text (escape_json)
-import recalldory.db (to_cstr)
 
 fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
 
 # Initialize a project by adding .recalldory/ to .gitignore if needed.
 fn pub handle_init(no_gitignore: Bool, out: Stdout) {
   if no_gitignore {
-    let _ = out.print('{"success": true, "message": "Skipped .gitignore configuration"}')
+    let _ = out.print(
+      '{"success": true, "message": "Skipped .gitignore configuration"}',
+    )
+
     return
   }
 
@@ -20,7 +23,9 @@ fn pub handle_init(no_gitignore: Bool, out: Stdout) {
         '/.recalldory/ is already in .gitignore'
       }
 
-      let _ = out.print('{"success": true, "added": ${added}, "message": "${escape_json(msg)}"}')
+      let _ = out.print(
+        '{"success": true, "added": ${added}, "message": "${escape_json(msg)}"}',
+      )
     }
     case Error(e) -> {
       let _ = out.print('{"success": false, "error": "${escape_json(e)}"}')
@@ -45,9 +50,7 @@ fn add_to_gitignore -> Result[Bool, String] {
           let text = bytes.into_string
 
           # Check if entry already exists
-          if text.contains?(gitignore_entry) {
-            return Result.Ok(false)
-          }
+          if text.contains?(gitignore_entry) { return Result.Ok(false) }
 
           # Append entry to existing file
           match append_to_gitignore(text, gitignore_entry) {
@@ -55,9 +58,7 @@ fn add_to_gitignore -> Result[Bool, String] {
             case Error(e) -> Result.Error(e)
           }
         }
-        case Error(_) -> {
-          Result.Error('Failed to read .gitignore')
-        }
+        case Error(_) -> Result.Error('Failed to read .gitignore')
       }
     }
     case Error(_) -> {
@@ -71,7 +72,10 @@ fn add_to_gitignore -> Result[Bool, String] {
 }
 
 # Append entry to existing .gitignore content and write it back.
-fn append_to_gitignore(existing: String, entry: String) -> Result[Bool, String] {
+fn append_to_gitignore(
+  existing: String,
+  entry: String,
+) -> Result[Bool, String] {
   # Add newline before entry if content doesn't end with one
   let mut content = existing
 
@@ -118,13 +122,9 @@ fn write_gitignore(content: String) -> Result[Bool, String] {
             Result.Error('Failed to write .gitignore')
           }
         }
-        case Error(_) -> {
-          Result.Error('Failed to write to .gitignore')
-        }
+        case Error(_) -> Result.Error('Failed to write to .gitignore')
       }
     }
-    case Error(_) -> {
-      Result.Error('Failed to create .gitignore')
-    }
+    case Error(_) -> Result.Error('Failed to create .gitignore')
   }
 }
