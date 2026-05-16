@@ -1,5 +1,5 @@
 import recalldory.cli (DbCommand, parse_args, print_help)
-import recalldory.hooks (handle_hook_install, handle_hook_post_compact)
+import recalldory.hooks (handle_hook_register, handle_hook_inject)
 import recalldory.init (handle_init)
 import recalldory.memory (
   output_contradictions, output_history, output_memories,
@@ -31,8 +31,9 @@ type async Main {
 
         match cmd {
           case Help -> print_help(out)
-          case HookPostCompact -> handle_hook_post_compact(out)
-          case HookInstall -> handle_hook_install(out)
+          case Version -> print_version(out)
+          case HookInject -> handle_hook_inject(out)
+          case HookRegister -> handle_hook_register(out)
           case Init(no_gitignore) -> handle_init(no_gitignore, out)
           case Db(db_cmd) -> run_with_db(db_cmd, out)
         }
@@ -682,4 +683,8 @@ fn rebuild_fts_both_dbs(out: Stdout) {
     }
     case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
   }
+}
+
+fn print_version(out: Stdout) {
+  out.print('recalldory 0.0.2')
 }

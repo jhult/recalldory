@@ -25,7 +25,7 @@ sequenceDiagram
     recalldory->>DB: Store memory
     Claude->>Claude: Context fills up...
     Claude->>Claude: Compact context
-    Claude->>recalldory: hook post-compact
+    Claude->>recalldory: hook inject
     recalldory->>DB: List recent memories
     DB-->>recalldory: Memories
     recalldory-->>Claude: Inject as context
@@ -33,7 +33,7 @@ sequenceDiagram
     Note over You,DB: Session 2: Recalling
     You->>Claude: New session starts
     Claude->>Claude: Context compacts
-    Claude->>recalldory: hook post-compact
+    Claude->>recalldory: hook inject
     recalldory->>DB: List recent memories
     DB-->>recalldory: Memories (including "important discovery")
     recalldory-->>Claude: Inject as context
@@ -48,7 +48,7 @@ sequenceDiagram
 curl -fsSL https://raw.githubusercontent.com/jhult/recalldory/trunk/install.sh | bash
 ```
 
-This downloads the latest binary for your platform, installs the Claude Code skill to `~/.claude/skills/recalldory/`, adds `~/.local/bin` to your PATH (if needed), and runs `recalldory hook install`. Re-running upgrades to the latest version.
+This downloads the latest binary for your platform, installs the Claude Code skill to `~/.claude/skills/recalldory/`, adds `~/.local/bin` to your PATH (if needed), and runs `recalldory hook register`. Re-running upgrades to the latest version.
 
 Options: `--prefix DIR` (default: `~/.local`), `--target TARGET` (override platform detection), `--skip-hook`, `--skip-skill`.
 
@@ -67,7 +67,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 [SQLite](https://www.sqlite.org/) is statically linked into all binaries. [Apple does not guarantee binary compatibility at the kernel syscall level](https://developer.apple.com/library/archive/qa/1118/_index.html), so macOS builds still dynamically link system libraries (libSystem, Security, CoreFoundation), but SQLite is embedded via `-force_load`.
 
-Then install the Claude Code skill and post-compact hook:
+Then install the Claude Code skill and register the memory injection hook:
 
 ```bash
 # Skill (for global availability across projects)
@@ -76,7 +76,7 @@ curl -fsSL -o ~/.claude/skills/recalldory/SKILL.md \
   https://raw.githubusercontent.com/jhult/recalldory/trunk/.claude/skills/recalldory/SKILL.md
 
 # Hook (auto-injects memories after context compaction)
-recalldory hook install
+recalldory hook register
 ```
 
 ### Project Initialization
@@ -144,8 +144,8 @@ inko build --release \
 
 | Command | Description |
 |---------|-------------|
-| `hook install` | Install post-compact hook into `$HOME/.claude/settings.json` |
-| `hook post-compact` | Run by hook to inject memories (usually automatic) |
+| `hook register` | Register post-compact hook into `$HOME/.claude/settings.json` (one-time setup) |
+| `hook inject` | Inject memories into context (called automatically by hook on compaction) |
 
 ## Design Decisions
 

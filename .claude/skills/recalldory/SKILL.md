@@ -160,8 +160,8 @@ recalldory rebuild-fts          # Rebuild FTS5 index on both DBs
 ## Hooks
 
 ```bash
-recalldory hook install         # Install post-compact hook (run once during setup)
-recalldory hook post-compact    # Injected automatically after context compaction
+recalldory hook register        # Register post-compact hook (one-time setup)
+recalldory hook inject          # Inject memories into context (auto-called on compaction)
 ```
 
-The post-compact hook surfaces recent memories from both databases when context compacts.
+The hook automatically surfaces recent memories from both databases when context compacts, injecting them as additional context for continuity across sessions.

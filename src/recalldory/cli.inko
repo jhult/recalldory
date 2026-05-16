@@ -147,8 +147,9 @@ type pub enum DbCommand {
 # Top-level command: either standalone or DB-backed
 type pub enum Command {
   case Help
-  case HookPostCompact
-  case HookInstall
+  case Version
+  case HookRegister
+  case HookInject
   case Init(Bool)
   case Db(DbCommand)
 }
@@ -195,6 +196,7 @@ fn pub parse_args -> Option[ParsedArgs] {
     case Ok(cmd) -> {
       match cmd {
         case 'help' -> Option.Some(Command.Help)
+        case 'version' -> Option.Some(Command.Version)
         case 'add' -> parse_add(args)
         case 'recall' -> parse_recall(args)
         case 'list' -> parse_list(args)
@@ -369,8 +371,8 @@ fn parse_hook(args: Array[String]) -> Option[Command] {
   match args.get(1) {
     case Ok(sub) -> {
       match sub {
-        case 'post-compact' -> Option.Some(Command.HookPostCompact)
-        case 'install' -> Option.Some(Command.HookInstall)
+        case 'inject' -> Option.Some(Command.HookInject)
+        case 'register' -> Option.Some(Command.HookRegister)
         case _ -> Option.None
       }
     }
@@ -495,64 +497,67 @@ fn pub print_help(out: Stdout) {
   let _ = out.print('Usage: recalldory <command> [options]\n')
   let _ = out.print('\nCommands:')
   let _ = out.print(
-    '  add <content> [--tags T] [--scope S] [--pin]   Add a memory',
+    '  add <content> [--tags T] [--scope S] [--pin]   Store a memory explicitly curated by you',
   )
   let _ = out.print(
-    '  recall <query> [--scope S] [--top N]            Search memories',
+    '  recall <query> [--scope S] [--top N]            Full-text search across project and global memories',
   )
   let _ = out.print(
-    '  list [--scope S] [--status S] [--limit N]       List memories',
+    '  list [--scope S] [--status S] [--limit N]       List memories by scope, status, or recency',
   )
   let _ = out.print(
-    '         [--older-than N]                          Filter by days since access',
+    '         [--older-than N]                          Filter by days since last access',
   )
   let _ = out.print(
-    '  update <id> [content] [--content C] [--tags T]  Update a memory',
+    '  update <id> [content] [--content C] [--tags T]  Correct a memory; old version marked superseded',
   )
   let _ = out.print(
-    '  forget <id>                                     Delete a memory',
+    '  forget <id>                                     Permanently delete a memory',
   )
   let _ = out.print(
-    '  pin <id>                                        Pin a memory',
+    '  pin <id>                                        Protect a memory from decay and deletion',
   )
   let _ = out.print(
-    '  unpin <id>                                      Unpin a memory',
+    '  unpin <id>                                      Remove protection from a memory',
   )
   let _ = out.print(
-    '  feedback <id> <helpful|harmful>                 Give feedback',
+    '  feedback <id> <helpful|harmful>                 Flag memory quality for ranking',
   )
   let _ = out.print(
-    '  maintain [--dry-run]                            Run maintenance',
+    '  maintain [--dry-run]                            Run decay, anti-pattern promotion, pruning',
   )
   let _ = out.print(
-    '  stats                                           Show statistics',
+    '  stats                                           Show combined memory statistics',
   )
   let _ = out.print(
-    '  export                                          Export as JSON',
+    '  export                                          Export all memories as JSON backup',
   )
   let _ = out.print(
-    '  import <file>                                   Import from JSON',
+    '  import <file>                                   Restore memories from JSON backup',
   )
   let _ = out.print(
-    '  history <id>                                    Show version history',
+    '  history <id>                                    Show edit history and versions',
   )
   let _ = out.print(
-    '  contradictions [--resolve <id>]                 Manage contradictions',
+    '  contradictions [--resolve <id>]                 Detect and resolve contradicting memories',
   )
   let _ = out.print(
-    '  agents-md [--path P]                            Generate AGENTS.md',
+    '  agents-md [--path P]                            Generate AGENTS.md from pinned memories',
   )
   let _ = out.print(
-    '  rebuild-fts                                     Rebuild FTS index',
+    '  rebuild-fts                                     Rebuild FTS5 search index',
   )
   let _ = out.print(
-    '  hook install                                    Install Claude hook',
+    '  hook register                                   Register post-compact hook in ~/.claude/settings.json',
   )
   let _ = out.print(
-    '  hook post-compact                               Post-compact hook',
+    '  hook inject                                     Inject memories into context (auto-called on compaction)',
   )
   let _ = out.print(
-    '  init [--no-gitignore]                           Initialize project (add .recalldory to .gitignore)',
+    '  init [--no-gitignore]                           Initialize project; add .recalldory to .gitignore',
+  )
+  let _ = out.print(
+    '  version                                         Show version number',
   )
   let _ = out.print('\nOptions:')
   let _ = out.print('\nEnvironment variables:')

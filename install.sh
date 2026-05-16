@@ -30,7 +30,7 @@ Install recalldory — persistent memory for AI coding assistants.
 Options:
   --prefix DIR       Installation prefix (default: ~/.local)
   --target TARGET    Override platform target (e.g. amd64-linux-gnu)
-  --skip-hook        Skip post-compact hook installation
+  --skip-hook        Skip memory injection hook registration
   --skip-skill       Skip Claude Code skill installation
   -h, --help         Show this help message
 
@@ -209,14 +209,14 @@ case ":${PATH}:" in
         ;;
 esac
 
-# --- Install post-compact hook ---
+# --- Register memory injection hook ---
 
 if [ "$SKIP_HOOK" = false ]; then
-    info "Installing post-compact hook..."
-    if "$BINARY" hook install; then
-        info "Post-compact hook installed"
+    info "Registering memory injection hook..."
+    if "$BINARY" hook register; then
+        info "Hook registered successfully"
     else
-        warn "Hook installation failed. Run 'recalldory hook install' manually."
+        warn "Hook registration failed. Run 'recalldory hook register' manually."
     fi
 fi
 
