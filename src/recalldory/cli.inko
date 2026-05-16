@@ -170,6 +170,7 @@ impl ParsedArgs {
 fn pub parse_args -> Option[ParsedArgs] {
   let raw_args = env.arguments
   let mut help = false
+  let mut version = false
   let mut args: Array[String] = []
   let mut i = 0
 
@@ -178,6 +179,8 @@ fn pub parse_args -> Option[ParsedArgs] {
       case Ok(arg) -> {
         if arg == '--help' or arg == '-h' {
           help = true
+        } else if arg == '--version' {
+          version = true
         } else {
           args.push(arg.clone)
         }
@@ -188,6 +191,10 @@ fn pub parse_args -> Option[ParsedArgs] {
     i = i + 1
   }
 
+  if version {
+    return Option.Some(ParsedArgs(command: Command.Version))
+  }
+
   if help or args.size < 1 {
     return Option.Some(ParsedArgs(command: Command.Help))
   }
@@ -196,7 +203,6 @@ fn pub parse_args -> Option[ParsedArgs] {
     case Ok(cmd) -> {
       match cmd {
         case 'help' -> Option.Some(Command.Help)
-        case 'version' -> Option.Some(Command.Version)
         case 'add' -> parse_add(args)
         case 'recall' -> parse_recall(args)
         case 'list' -> parse_list(args)
@@ -548,7 +554,7 @@ fn pub print_help(out: Stdout) {
     '  rebuild-fts                                     Rebuild FTS5 search index',
   )
   let _ = out.print(
-    '  hook register                                   Register post-compact hook in ~/.claude/settings.json',
+    '  hook register                                   Register memory injection hook in ~/.claude/settings.json',
   )
   let _ = out.print(
     '  hook inject                                     Inject memories into context (auto-called on compaction)',
@@ -556,10 +562,9 @@ fn pub print_help(out: Stdout) {
   let _ = out.print(
     '  init [--no-gitignore]                           Initialize project; add .recalldory to .gitignore',
   )
-  let _ = out.print(
-    '  version                                         Show version number',
-  )
   let _ = out.print('\nOptions:')
+  let _ = out.print('  --help                                          Show this help message')
+  let _ = out.print('  --version                                       Show version number')
   let _ = out.print('\nEnvironment variables:')
   let _ = out.print(
     '  RECALLDORY_DB_PATH         Project database path (default: .recalldory/recalldory.db)',

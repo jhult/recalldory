@@ -116,7 +116,7 @@ fn query_memories_for_hook_global(header: String) -> String {
   }
 }
 
-# Register the post-compact hook into ~/.claude/settings.json. Uses atomic rename
+# Register the memory injection hook into ~/.claude/settings.json. Uses atomic rename
 # to avoid corrupting the settings file.
 fn pub handle_hook_register(out: Stdout) {
   # Resolve path to this executable for the hook command

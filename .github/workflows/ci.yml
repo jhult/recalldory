@@ -66,6 +66,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Extract version from git tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
       - name: Install dependencies
         run: dnf install -y unzip xz
 
@@ -87,6 +95,7 @@ jobs:
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
+          VERSION: ${{ env.VERSION }}
         run: ulimit -n 10240 && inko build --release --target "$TARGET" --linker zig --linker-arg "-L$PWD/lib" --static src/recalldory.inko
 
       - name: Rename artifact
@@ -123,6 +132,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Extract version from git tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
       - name: Install Inko
         run: brew install --HEAD inko
 
@@ -144,6 +161,7 @@ jobs:
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
+          VERSION: ${{ env.VERSION }}
         run: |
           SDK_PATH="$(xcrun --show-sdk-path)"
           if echo "$TARGET" | grep -q amd64; then
@@ -193,6 +211,18 @@ jobs:
     permissions:
       contents: write # required to create the GitHub release and tag
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Extract version from git tag
+        run: |
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -203,5 +233,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.VERSION }}
         run: gh release create "v${VERSION}" --title "v${VERSION}" artifacts/*

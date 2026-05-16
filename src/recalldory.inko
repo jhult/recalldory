@@ -18,6 +18,7 @@ import recalldory.memstore_import (
 )
 import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
 import recalldory.text (escape_json)
+import std.env
 import std.stdio (Stdout)
 
 # Application entry point.
@@ -686,5 +687,10 @@ fn rebuild_fts_both_dbs(out: Stdout) {
 }
 
 fn print_version(out: Stdout) {
-  out.print('recalldory 0.0.2')
+  let version = match env.get('VERSION') {
+    case Ok(v) -> v
+    case Error(_) -> 'dev'
+  }
+
+  out.print('recalldory ${version}')
 }
