@@ -191,9 +191,7 @@ fn pub parse_args -> Option[ParsedArgs] {
     i = i + 1
   }
 
-  if version {
-    return Option.Some(ParsedArgs(command: Command.Version))
-  }
+  if version { return Option.Some(ParsedArgs(command: Command.Version)) }
 
   if help or args.size < 1 {
     return Option.Some(ParsedArgs(command: Command.Help))
@@ -563,8 +561,12 @@ fn pub print_help(out: Stdout) {
     '  init [--no-gitignore]                           Initialize project; add .recalldory to .gitignore',
   )
   let _ = out.print('\nOptions:')
-  let _ = out.print('  --help                                          Show this help message')
-  let _ = out.print('  --version                                       Show version number')
+  let _ = out.print(
+    '  --help                                          Show this help message',
+  )
+  let _ = out.print(
+    '  --version                                       Show version number',
+  )
   let _ = out.print('\nEnvironment variables:')
   let _ = out.print(
     '  RECALLDORY_DB_PATH         Project database path (default: .recalldory/recalldory.db)',

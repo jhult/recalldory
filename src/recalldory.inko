@@ -1,5 +1,5 @@
 import recalldory.cli (DbCommand, parse_args, print_help)
-import recalldory.hooks (handle_hook_register, handle_hook_inject)
+import recalldory.hooks (handle_hook_inject, handle_hook_register)
 import recalldory.init (handle_init)
 import recalldory.memory (
   output_contradictions, output_history, output_memories,
