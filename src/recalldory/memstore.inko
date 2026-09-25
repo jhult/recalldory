@@ -63,7 +63,9 @@ fn ensure_parent_dir(db_path: String) {
     i = i - 1
   }
 
-  if dir != '' { let _ = dir.to_path.create_directory }
+  if dir != '' {
+    let _ = dir.to_path.create_directory
+  }
 }
 
 # Migrate from old memory.db to recalldory.db for a given base directory.

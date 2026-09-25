@@ -100,10 +100,8 @@ fn validate_path(path: String, allow_tmp: Bool) -> Result[Path, String] {
 }
 
 # Generate an AGENTS.md file from pinned and anti-pattern memories.
-fn pub generate_agents_md(
-  db: mut Database,
-  path: String,
-) -> Result[Nil, String] {
+fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String]
+{
   let validated_path = match validate_path(path, true) {
     case Ok(p) -> p
     case Error(e) -> return Result.Error(e)
@@ -565,7 +563,9 @@ fn import_memories_inner(
                   }
                 }
 
-                if ok { let _ = stmt.step }
+                if ok {
+                  let _ = stmt.step
+                }
 
                 stmt.finalize
               }
@@ -681,7 +681,9 @@ fn import_memories_inner(
                 }
               }
 
-              if ok { let _ = stmt.step }
+              if ok {
+                let _ = stmt.step
+              }
 
               stmt.finalize
             }

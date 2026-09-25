@@ -431,7 +431,9 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
     'CREATE INDEX IF NOT EXISTS idx_memories_simhash_band4 ON memories(simhash_band4)',
   ]
 
-  for sql in indexes.iter { let _ = db.exec(sql) }
+  for sql in indexes.iter {
+    let _ = db.exec(sql)
+  }
 
   # Populate LSH band columns for existing memories that have simhash but no bands
   let _ = db.exec(

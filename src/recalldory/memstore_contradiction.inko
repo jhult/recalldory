@@ -124,10 +124,8 @@ fn pub list_contradictions(db: mut Database) -> Result[Array[Memory], String] {
 }
 
 # Clear the contradiction flag on a memory, resolving the conflict.
-fn pub resolve_contradiction(
-  db: mut Database,
-  id: Int,
-) -> Result[Bool, String] {
+fn pub resolve_contradiction(db: mut Database, id: Int) -> Result[Bool, String]
+{
   match
     exec_with_int(
       db,

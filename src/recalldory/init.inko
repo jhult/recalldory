@@ -72,10 +72,8 @@ fn add_to_gitignore -> Result[Bool, String] {
 }
 
 # Append entry to existing .gitignore content and write it back.
-fn append_to_gitignore(
-  existing: String,
-  entry: String,
-) -> Result[Bool, String] {
+fn append_to_gitignore(existing: String, entry: String) -> Result[Bool, String]
+{
   # Add newline before entry if content doesn't end with one
   let mut content = existing
 

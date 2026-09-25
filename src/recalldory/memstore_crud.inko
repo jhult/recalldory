@@ -607,7 +607,9 @@ fn pub search_memories(
       idx = idx + 1
     }
 
-    if ok { let _ = touch_stmt.step }
+    if ok {
+      let _ = touch_stmt.step
+    }
 
     touch_stmt.finalize
   }
