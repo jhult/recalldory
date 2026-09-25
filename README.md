@@ -99,7 +99,7 @@ The `init` command is idempotent and safe to run multiple times.
 ### Build from source
 
 ```bash
-# Requires [Inko commit abca5b6](https://github.com/inko-lang/inko/commit/abca5b6beae2914602a1a353efc899e2cb3ad877) and Zig
+# Requires Inko 0.21.1 or newer and Zig
 scripts/build-sqlite.sh arm64-mac-native  # or your target triple
 inko build --release \
   --linker-arg "-L$PWD/lib" \
