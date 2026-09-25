@@ -28,7 +28,7 @@ jobs:
     container:
       image: ghcr.io/inko-lang/inko@sha256:e36bd49b1bc37d580849e749ae5884864e30a750d1f870e418fafc629a87c49f
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -62,7 +62,7 @@ jobs:
           - amd64-linux-musl
           - arm64-linux-musl
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -128,7 +128,7 @@ jobs:
           - amd64-mac-native
           - arm64-mac-native
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -211,7 +211,7 @@ jobs:
     permissions:
       contents: write # required to create the GitHub release and tag
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
