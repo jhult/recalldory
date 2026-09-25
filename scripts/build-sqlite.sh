@@ -11,7 +11,7 @@
 # then compiles sqlite3.o and creates libsqlite3.a for the target.
 set -euo pipefail
 
-SQLITE_VERSION="3530000"
+SQLITE_VERSION="3530400"
 SQLITE_YEAR="2026"
 SQLITE_URL="https://www.sqlite.org/${SQLITE_YEAR}/sqlite-amalgamation-${SQLITE_VERSION}.zip"
 SQLITE_FLAGS="-DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1"
