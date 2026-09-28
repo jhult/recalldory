@@ -148,8 +148,8 @@ type pub enum DbCommand {
 type pub enum Command {
   case Help
   case Version
-  case HookRegister
-  case HookInject
+  case HookRegister(Bool)
+  case HookInject(Bool)
   case Init(Bool)
   case Db(DbCommand)
 }
@@ -375,15 +375,18 @@ fn parse_import(args: Array[String]) -> Option[Command] {
 fn parse_hook(args: Array[String]) -> Option[Command] {
   if args.size < 2 { return Option.None }
 
-  match args.get(1) {
-    case Ok(sub) -> {
-      match sub {
-        case 'inject' -> Option.Some(Command.HookInject)
-        case 'register' -> Option.Some(Command.HookRegister)
-        case _ -> Option.None
-      }
-    }
-    case Error(_) -> Option.None
+  let sub = match args.get(1) {
+    case Ok(s) -> s.to_string
+    case Error(_) -> return Option.None
+  }
+
+  let parser = FlagParser.new(args, 2)
+  let titles = parser.bool_flag('--titles')
+
+  match sub {
+    case 'inject' -> Option.Some(Command.HookInject(titles))
+    case 'register' -> Option.Some(Command.HookRegister(titles))
+    case _ -> Option.None
   }
 }
 
@@ -564,10 +567,13 @@ fn pub print_help(out: Stdout) {
     '  rebuild-fts                                     Rebuild FTS5 search index',
   )
   let _ = out.print(
-    '  hook register                                   Register memory injection hook in ~/.claude/settings.json',
+    '  hook register [--titles]                        Register memory injection hook in ~/.claude/settings.json',
   )
   let _ = out.print(
-    '  hook inject                                     Inject memories into context (auto-called on compaction)',
+    '  hook inject [--titles]                           Inject memories into context (auto-called on compaction)',
+  )
+  let _ = out.print(
+    '                                                   --titles injects previews; use recall for full text',
   )
   let _ = out.print(
     '  init [--no-gitignore]                           Initialize project; add .recalldory to .gitignore',

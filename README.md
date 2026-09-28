@@ -144,8 +144,8 @@ inko build --release \
 
 | Command | Description |
 |---------|-------------|
-| `hook register` | Register post-compact hook into `$HOME/.claude/settings.json` (one-time setup) |
-| `hook inject` | Inject memories into context (called automatically by hook on compaction) |
+| `hook register [--titles]` | Register post-compact hook into `$HOME/.claude/settings.json` (one-time setup). `--titles` registers preview-only injection |
+| `hook inject [--titles]` | Inject memories into context (called automatically by hook on compaction). `--titles` injects short previews; use `recall` for full text |
 
 ## Design Decisions
 

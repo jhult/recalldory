@@ -164,6 +164,7 @@ recalldory rebuild-fts          # Rebuild FTS5 index on both DBs
 
 ```bash
 recalldory hook register        # Register post-compact hook (one-time setup)
+recalldory hook register --titles  # Register preview-only injection (fewer tokens per compaction)
 recalldory hook inject          # Inject memories into context (auto-called on compaction)
 ```
 

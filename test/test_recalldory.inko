@@ -3,8 +3,9 @@ import recalldory.hash (
   simhash_substr,
 )
 import recalldory.text (
-  count_entity_overlap, escape_json, extract_entities, has_negation_words,
-  sanitize_fts5_query, to_lowercase,
+  count_entity_overlap, ellipsize, escape_json, extract_entities,
+  has_negation_words, sanitize_fts5_query, strip_invisible_unicode,
+  to_lowercase,
 )
 import std.test (Tests)
 
@@ -199,6 +200,51 @@ fn pub tests(t: mut Tests) {
 
   t.test('sanitize_fts5_query replaces parentheses with spaces', fn (t) {
     t.equal(sanitize_fts5_query('test (query)'), 'test  query ')
+  })
+
+  # --- strip_invisible_unicode ---
+
+  t.test('strip_invisible_unicode removes zero-width space', fn (t) {
+    t.equal(strip_invisible_unicode('a\u{200B}b'), 'ab')
+  })
+
+  t.test('strip_invisible_unicode removes byte order mark', fn (t) {
+    t.equal(strip_invisible_unicode('\u{FEFF}hello'), 'hello')
+  })
+
+  t.test('strip_invisible_unicode removes bidirectional overrides', fn (t) {
+    t.equal(strip_invisible_unicode('a\u{202E}bc\u{202C}'), 'abc')
+  })
+
+  t.test('strip_invisible_unicode removes tag characters', fn (t) {
+    t.equal(strip_invisible_unicode('x\u{E0041}y'), 'xy')
+  })
+
+  t.test(
+    'strip_invisible_unicode removes ASCII control chars but keeps whitespace',
+    fn (t) { t.equal(strip_invisible_unicode('a\u{1}b\nc\td'), 'ab\nc\td') },
+  )
+
+  t.test('strip_invisible_unicode preserves visible Unicode', fn (t) {
+    t.equal(strip_invisible_unicode('caf\u{E9}'), 'caf\u{E9}')
+  })
+
+  t.test('strip_invisible_unicode handles empty string', fn (t) {
+    t.equal(strip_invisible_unicode(''), '')
+  })
+
+  # --- ellipsize ---
+
+  t.test('ellipsize returns short strings unchanged', fn (t) {
+    t.equal(ellipsize('hello', 10), 'hello')
+  })
+
+  t.test('ellipsize truncates long strings with an ellipsis', fn (t) {
+    t.equal(ellipsize('aaaaaaaaaa', 7), 'aaaa...')
+  })
+
+  t.test('ellipsize does not split a UTF-8 sequence', fn (t) {
+    t.equal(ellipsize('a\u{E9}\u{E9}', 4), 'a...')
   })
 
   # --- String.contains? ---

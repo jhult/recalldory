@@ -34,8 +34,8 @@ type async Main {
         match cmd {
           case Help -> print_help(out)
           case Version -> print_version(out)
-          case HookInject -> handle_hook_inject(out)
-          case HookRegister -> handle_hook_register(out)
+          case HookInject(titles) -> handle_hook_inject(titles, out)
+          case HookRegister(titles) -> handle_hook_register(titles, out)
           case Init(no_gitignore) -> handle_init(no_gitignore, out)
           case Db(db_cmd) -> run_with_db(db_cmd, out)
         }
