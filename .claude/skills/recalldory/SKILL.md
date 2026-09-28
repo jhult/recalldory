@@ -71,6 +71,8 @@ recalldory add "content" --pin                    # Project, pinned
 recalldory add "content" --scope global          # Global, not pinned
 recalldory add "content" --scope global --pin    # Global, pinned
 recalldory add "content" --tags "tag1,tag2"      # With tags
+recalldory add "DB pool is 25" --source "config/database.yml"  # Record provenance
+recalldory add "Use puma, not unicorn" --source "user"
 ```
 
 ### Update — the proper way to correct a memory
@@ -81,6 +83,7 @@ When a memory needs correction, use `update` instead of `forget` + `add`. Update
 recalldory update <id> "corrected content"        # Update content
 recalldory update <id> --tags "new,tags"         # Update tags
 recalldory update <id> --scope global             # Change scope
+recalldory update <id> --source "https://docs.example.com/auth"  # Set provenance
 ```
 
 ### List

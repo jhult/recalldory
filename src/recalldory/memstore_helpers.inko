@@ -7,7 +7,7 @@ let pub STATUS_SUPERSEDED = 'superseded'
 let pub STATUS_ANTI_PATTERN = 'anti-pattern'
 
 # Comma-separated list of all memory table columns for SELECT queries.
-let pub MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength'
+let pub MEMORY_COLUMNS = 'id, content, content_hash, summary, tags, scope, status, is_negative, strength, access_count, decay_rate, helpful_count, harmful_count, created_at, updated_at, last_accessed, storage_strength, retrieval_strength, source'
 
 # Maximum content size: 64KB
 let pub MAX_CONTENT_SIZE = 65536

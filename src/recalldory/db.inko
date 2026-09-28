@@ -324,6 +324,7 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
       content       TEXT NOT NULL,
       content_hash  TEXT NOT NULL,
       summary       TEXT,
+      source        TEXT DEFAULT '',
       tags          TEXT DEFAULT '[]',
       scope         TEXT DEFAULT 'project',
       status        TEXT DEFAULT 'active',
@@ -403,6 +404,7 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
 fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   # Try to add new columns (ignore errors if columns already exist)
   let migrations = [
+    'ALTER TABLE memories ADD COLUMN source TEXT DEFAULT \'\'',
     'ALTER TABLE memories ADD COLUMN simhash TEXT',
     'ALTER TABLE memories ADD COLUMN storage_strength REAL DEFAULT 0.1',
     'ALTER TABLE memories ADD COLUMN retrieval_strength REAL DEFAULT 1.0',

@@ -9,6 +9,7 @@ type pub Memory {
   let pub @content: String
   let pub @content_hash: String
   let pub @summary: String
+  let pub @source: String
   let pub @tags: String
   let pub @scope: String
   let pub @status: String
@@ -46,6 +47,7 @@ impl Memory {
         case Some(s) -> s
         case None -> ''
       },
+      source: stmt.column_text(18),
       tags: stmt.column_text(4),
       scope: stmt.column_text(5),
       status: stmt.column_text(6),
@@ -73,22 +75,22 @@ impl Memory {
     build(stmt, 0.0 as Float64, Option.None, Option.None, false)
   }
 
-  # Build from a statement with FTS5 similarity score in column 18.
+  # Build from a statement with FTS5 similarity score in column 19.
   fn pub static from_row_with_score(stmt: ref Statement) -> Memory {
-    build(stmt, stmt.column_double(18), Option.None, Option.None, false)
+    build(stmt, stmt.column_double(19), Option.None, Option.None, false)
   }
 
-  # Build from a statement with parent_id in column 18.
+  # Build from a statement with parent_id in column 19.
   fn pub static from_row_with_parent(stmt: ref Statement) -> Memory {
-    let parent = stmt.column_int(18)
+    let parent = stmt.column_int(19)
     let pid = if parent > 0 { Option.Some(parent) } else { Option.None }
 
     build(stmt, 0.0 as Float64, pid, Option.None, false)
   }
 
-  # Build from a statement with contradicts_id in column 18, marked as contradiction.
+  # Build from a statement with contradicts_id in column 19, marked as contradiction.
   fn pub static from_row_with_contradicts(stmt: ref Statement) -> Memory {
-    let contradicts = stmt.column_int(18)
+    let contradicts = stmt.column_int(19)
     let cid = if contradicts > 0 {
       Option.Some(contradicts)
     } else {
@@ -154,6 +156,7 @@ fn pub output_memories(memories: Array[Memory], out: Stdout) {
     obj.set('summary', Json.String(memory.content))
     obj.set('score', Json.Float(score as Float))
     obj.set('tags', Json.String(memory.tags))
+    obj.set('source', Json.String(memory.source))
     obj.set('status', Json.String(memory.status))
     obj.set('negative_flag', Json.Bool(memory.xflag))
     results.push(Json.Object(obj))
@@ -185,6 +188,7 @@ fn pub output_merged_memories(
     obj.set('summary', Json.String(memory.content))
     obj.set('score', Json.Float(score as Float))
     obj.set('tags', Json.String(memory.tags))
+    obj.set('source', Json.String(memory.source))
     obj.set('status', Json.String(memory.status))
     obj.set('negative_flag', Json.Bool(memory.xflag))
     results.push(Json.Object(obj))
@@ -202,6 +206,7 @@ fn pub output_merged_memories(
     obj.set('summary', Json.String(memory.content))
     obj.set('score', Json.Float(score as Float))
     obj.set('tags', Json.String(memory.tags))
+    obj.set('source', Json.String(memory.source))
     obj.set('status', Json.String(memory.status))
     obj.set('negative_flag', Json.Bool(memory.xflag))
     results.push(Json.Object(obj))
@@ -223,6 +228,7 @@ fn pub output_history(result: HistoryResult, out: Stdout) {
     obj.set('id', Json.Int(memory.id))
     obj.set('content', Json.String(memory.content))
     obj.set('status', Json.String(memory.status))
+    obj.set('source', Json.String(memory.source))
 
     match memory.parent_id {
       case Some(pid) -> obj.set('parent_id', Json.Int(pid))

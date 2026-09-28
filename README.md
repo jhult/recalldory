@@ -114,10 +114,10 @@ inko build --release \
 
 | Command | Description |
 |---------|-------------|
-| `add <content> [--tags T] [--scope S] [--pin]` | Store a memory (optionally pin it) |
+| `add <content> [--tags T] [--scope S] [--pin] [--source S]` | Store a memory (optionally pin it) |
 | `recall <query> [--scope S] [--top N]` | Full-text search with BM25 ranking |
 | `list [--scope S] [--status S] [--limit N] [--older-than N]` | List memories by scope/status |
-| `update <id> [content] [--content C] [--tags T]` | Correct a memory in place |
+| `update <id> [content] [--content C] [--tags T] [--source S]` | Correct a memory in place |
 | `forget <id>` | Delete a memory |
 | `feedback <id> helpful\|harmful` | Flag memory quality |
 
@@ -161,7 +161,7 @@ inko build --release \
 | Scope (project/global) | Keep project-specific knowledge separate from universal patterns |
 | `.recalldory/` not committed | Project database is user/machine-specific, not shared code - version control holds code and documentation, not AI-assistant metadata |
 | No automatic relaxation | Anti-patterns can only be demoted manually. A system that only tightens [ratchets itself into brittleness](https://zby.github.io/commonplace/notes/designing-agent-memory-systems/) (see [Design Philosophy](#design-philosophy)); relaxation is planned but deliberate - users can `unpin` or `forget` to loosen constraints now |
-| Provenance is mostly implicit | Explicit curation ("you curate, recalldory persists") means ~80-90% of memories are user instructions with self-evident authority. A `--source` flag (planned) will handle the ~10-20% where origin adds signal: external references, verifiable claims, and reasons-not-just-rules |
+| Provenance is mostly implicit | Explicit curation ("you curate, recalldory persists") means ~80-90% of memories are user instructions with self-evident authority. The optional `--source` flag handles the ~10-20% where origin adds signal: external references, verifiable claims, and reasons-not-just-rules |
 
 ## Design Philosophy
 
@@ -300,7 +300,7 @@ The [11 needs framework](https://zby.github.io/commonplace/notes/designing-agent
 | Serve multiple consumers | **Partial** | JSON output serves agents; `agents-md` serves humans; no multi-agent coordination |
 | Activate behavior-changing memory before the mistake | **Partial** | Post-compact hook is one activation method; no on-situation loading (e.g., loading testing memories when the agent is about to write tests) |
 | Promote only when future value exceeds maintenance cost | **Handled** | Pin, anti-pattern promotion, and decay-based pruning each have explicit cost thresholds |
-| Keep derived views from drifting | **Delegated** | `agents-md` generates a view from memories. The file says "do not edit manually" and should be regenerated when memories change. Individual memory provenance (`--source`) is a planned feature |
+| Keep derived views from drifting | **Delegated** | `agents-md` generates a view from memories. The file says "do not edit manually" and should be regenerated when memories change. Individual memory provenance (`--source` on `add`/`update`) is supported |
 | Retire, redact, supersede, and relax | **Partial** | Forget, superseded status, and decay handle retirement and supersession. Relaxation (automatic demotion of anti-patterns when evidence changes) is manual only |
 | Make authority explicit | **Handled** | Manual add means user authority by definition; the [agency model](https://zby.github.io/commonplace/agent-memory-systems/agentic-memory-systems-comparative-review/) choice (who decides what to remember) is the most consequential architectural decision, and recalldory chooses the user |
 | Evaluate by effects, not existence | **Partial** | Helpful/harmful feedback measures behavioral impact, but there is no automated behavioral testing of whether activated memory actually changes downstream action |

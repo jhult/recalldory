@@ -126,7 +126,7 @@ fn parse_int_arg(args: ref Array[String], pos: Int) -> Option[Int] {
 
 # Commands that require a database connection
 type pub enum DbCommand {
-  case Add(String, String, String, Bool)
+  case Add(String, String, String, Bool, String)
   case Recall(String, String, Int)
   case List(String, String, Int, Option[Int])
   case Forget(Int)
@@ -138,7 +138,7 @@ type pub enum DbCommand {
   case Stats
   case Export
   case Import(String)
-  case Update(Int, String, String, String)
+  case Update(Int, String, String, String, String)
   case History(Int)
   case Contradictions(Option[Int])
   case RebuildFts
@@ -243,12 +243,15 @@ fn pub parse_add(args: Array[String]) -> Option[Command] {
   let tags = parser.string_flag('--tags')
   let scope = parser.string_flag('--scope')
   let pin = parser.bool_flag('--pin')
+  let source = parser.string_flag('--source')
 
   if scope != '' and !validate_scope(scope) { return Option.None }
 
   let final_scope = if scope != '' { scope } else { 'project' }
 
-  Option.Some(Command.Db(DbCommand.Add(content, tags, final_scope, pin)))
+  Option.Some(
+    Command.Db(DbCommand.Add(content, tags, final_scope, pin, source)),
+  )
 }
 
 fn pub parse_recall(args: Array[String]) -> Option[Command] {
@@ -473,13 +476,16 @@ fn pub parse_update(args: Array[String]) -> Option[Command] {
   let flag_content = parser.string_flag('--content')
   let tags = parser.string_flag('--tags')
   let scope = parser.string_flag('--scope')
+  let source = parser.string_flag('--source')
   let content = if flag_content != '' { flag_content } else { positional }
 
-  if content == '' and tags == '' and scope == '' { return Option.None }
+  if content == '' and tags == '' and scope == '' and source == '' {
+    return Option.None
+  }
 
   if scope != '' and !validate_scope(scope) { return Option.None }
 
-  Option.Some(Command.Db(DbCommand.Update(id, content, tags, scope)))
+  Option.Some(Command.Db(DbCommand.Update(id, content, tags, scope, source)))
 }
 
 fn parse_history(args: Array[String]) -> Option[Command] {
@@ -504,6 +510,9 @@ fn pub print_help(out: Stdout) {
     '  add <content> [--tags T] [--scope S] [--pin]   Store a memory explicitly curated by you',
   )
   let _ = out.print(
+    '                  [--source S]                   Optional provenance (URL, file, or "user")',
+  )
+  let _ = out.print(
     '  recall <query> [--scope S] [--top N]            Full-text search across project and global memories',
   )
   let _ = out.print(
@@ -514,6 +523,9 @@ fn pub print_help(out: Stdout) {
   )
   let _ = out.print(
     '  update <id> [content] [--content C] [--tags T]  Correct a memory; old version marked superseded',
+  )
+  let _ = out.print(
+    '                  [--source S]                    Optional provenance for the new version',
   )
   let _ = out.print(
     '  forget <id>                                     Permanently delete a memory',

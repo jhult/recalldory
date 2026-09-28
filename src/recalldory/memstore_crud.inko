@@ -27,12 +27,24 @@ fn pub add_memory(
   scope: String,
   pin: Bool,
 ) -> Result[AddResult, String] {
+  add_memory_with_source(db, content, tags, scope, pin, '')
+}
+
+# Add a new memory with provenance metadata. See `add_memory` for details.
+fn pub add_memory_with_source(
+  db: mut Database,
+  content: String,
+  tags: String,
+  scope: String,
+  pin: Bool,
+  source: String,
+) -> Result[AddResult, String] {
   match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
 
-  match add_memory_inner(db, content, tags, scope, pin) {
+  match add_memory_inner(db, content, tags, scope, pin, source) {
     case Ok(v) -> {
       match exec_sql(db, 'COMMIT') {
         case Ok(_) -> Result.Ok(v)
@@ -224,6 +236,7 @@ fn pub add_memory_inner(
   tags: String,
   scope: String,
   pin: Bool,
+  source: String,
 ) -> Result[AddResult, String] {
   let clean_content = strip_invisible_unicode(content)
 
@@ -308,7 +321,7 @@ fn pub add_memory_inner(
     }
   }
 
-  let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, is_contradiction, contradicts_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -393,6 +406,11 @@ fn pub add_memory_inner(
       insert_stmt.finalize
       return Result.Error(e)
     }
+  }
+
+  match bind_text_or_err(mut insert_stmt, 13, source) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
   }
 
   let result = insert_stmt.step
@@ -520,7 +538,7 @@ fn pub search_memories(
   # Return empty results for empty query
   if safe_query.size == 0 { return Result.Ok([]) }
 
-  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, m.storage_strength, m.retrieval_strength, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status NOT IN ('${STATUS_SUPERSEDED}', '${STATUS_ANTI_PATTERN}')"
+  let mut sql = "SELECT m.id, m.content, m.content_hash, m.summary, m.tags, m.scope, m.status, m.is_negative, m.strength, m.access_count, m.decay_rate, m.helpful_count, m.harmful_count, m.created_at, m.updated_at, m.last_accessed, m.storage_strength, m.retrieval_strength, m.source, bm25(memories_fts) as similarity_score FROM memories m JOIN memories_fts fts ON m.id = fts.rowid WHERE memories_fts MATCH ? AND m.status NOT IN ('${STATUS_SUPERSEDED}', '${STATUS_ANTI_PATTERN}')"
 
   if scope_filter != '' { sql = sql + ' AND m.scope = ?' }
 
@@ -702,12 +720,24 @@ fn pub update_memory(
   tags: String,
   scope: String,
 ) -> Result[Int, String] {
+  update_memory_with_source(db, id, content, tags, scope, '')
+}
+
+# Update a memory with provenance metadata. See `update_memory` for details.
+fn pub update_memory_with_source(
+  db: mut Database,
+  id: Int,
+  content: String,
+  tags: String,
+  scope: String,
+  source: String,
+) -> Result[Int, String] {
   match exec_sql(db, 'BEGIN') {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
   }
 
-  match update_memory_inner(db, id, content, tags, scope) {
+  match update_memory_inner(db, id, content, tags, scope, source) {
     case Ok(v) -> {
       match exec_sql(db, 'COMMIT') {
         case Ok(_) -> Result.Ok(v)
@@ -722,6 +752,7 @@ fn pub update_memory(
 type ExistingMemory {
   let @tags: String
   let @scope: String
+  let @source: String
   let @is_contradiction: Int
   let @contradicts_id: Option[Int]
 }
@@ -733,7 +764,7 @@ fn get_existing_memory(
 ) -> Result[ExistingMemory, String] {
   let mut stmt = match
     db.prepare(
-      'SELECT tags, scope, is_contradiction, contradicts_id FROM memories WHERE id = ?',
+      'SELECT tags, scope, source, is_contradiction, contradicts_id FROM memories WHERE id = ?',
     )
   {
     case Ok(s) -> s
@@ -748,8 +779,9 @@ fn get_existing_memory(
   let result = if stmt.step == SQLITE_ROW {
     let mut tags = stmt.column_text(0)
     let mut scope = stmt.column_text(1)
-    let contradiction = stmt.column_int(2)
-    let contradicts_raw = stmt.column_int(3)
+    let source = stmt.column_text(2)
+    let contradiction = stmt.column_int(3)
+    let contradicts_raw = stmt.column_int(4)
     let contradicts_id = if contradicts_raw > 0 {
       Option.Some(contradicts_raw)
     } else {
@@ -760,6 +792,7 @@ fn get_existing_memory(
       ExistingMemory(
         tags: tags,
         scope: scope,
+        source: source,
         is_contradiction: contradiction,
         contradicts_id: contradicts_id,
       ),
@@ -778,6 +811,7 @@ fn update_memory_inner(
   content: String,
   tags: String,
   scope: String,
+  source: String,
 ) -> Result[Int, String] {
   let clean_content = strip_invisible_unicode(content)
 
@@ -793,6 +827,7 @@ fn update_memory_inner(
 
   let old_tags = if tags == '' { old.tags.to_string } else { tags }
   let old_scope = if scope == '' { old.scope.to_string } else { scope }
+  let old_source = if source == '' { old.source.to_string } else { source }
 
   # Check for content_hash collision before superseding old memory
   let hash = sha256_hash(clean_content)
@@ -840,7 +875,7 @@ fn update_memory_inner(
   let band3 = simhash_substr(simhash_val, 4, 2)
   let band4 = simhash_substr(simhash_val, 6, 2)
 
-  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, parent_id, is_contradiction, contradicts_id) VALUES (?, ?, ?, ?, '${STATUS_ACTIVE}', ?, ?, ?, ?, ?, ?, ?, ?)"
+  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, parent_id, is_contradiction, contradicts_id, source) VALUES (?, ?, ?, ?, '${STATUS_ACTIVE}', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -908,6 +943,11 @@ fn update_memory_inner(
       insert_stmt.finalize
       return Result.Error(e)
     }
+  }
+
+  match bind_text_or_err(mut insert_stmt, 13, old_source) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
   }
 
   let result = insert_stmt.step

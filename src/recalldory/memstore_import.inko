@@ -270,16 +270,17 @@ fn pub export_memories(db: mut Database) -> Result[String, String] {
     obj.set('last_accessed', Json.String(stmt.column_text(15)))
     obj.set('storage_strength', Json.Float(stmt.column_double(16) as Float))
     obj.set('retrieval_strength', Json.Float(stmt.column_double(17) as Float))
+    obj.set('source', Json.String(stmt.column_text(18)))
 
-    let parent_id_raw = stmt.column_int(18)
+    let parent_id_raw = stmt.column_int(19)
 
     obj.set(
       'parent_id',
       if parent_id_raw > 0 { Json.Int(parent_id_raw) } else { Json.Null },
     )
-    obj.set('is_contradiction', Json.Int(stmt.column_int(19)))
+    obj.set('is_contradiction', Json.Int(stmt.column_int(20)))
 
-    let contradicts_id_raw = stmt.column_int(20)
+    let contradicts_id_raw = stmt.column_int(21)
 
     obj.set(
       'contradicts_id',
@@ -408,9 +409,14 @@ fn import_memories_inner(
         case None -> 'active'
       }
 
+      let source = match mem.query.key('source').as_string {
+        case Some(s) -> s
+        case None -> ''
+      }
+
       let pin = status == 'pinned'
 
-      match add_memory_inner(db, mem_content, tags, scope, pin) {
+      match add_memory_inner(db, mem_content, tags, scope, pin, source) {
         case Ok(result) -> {
           let new_id = result.id
 

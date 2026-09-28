@@ -10,8 +10,9 @@ import recalldory.memstore_contradiction (
   list_contradictions, resolve_contradiction,
 )
 import recalldory.memstore_crud (
-  add_memory, feedback_memory, forget_memory, get_history, list_memories,
-  pin_memory, search_memories, unpin_memory, update_memory,
+  add_memory_with_source, feedback_memory, forget_memory, get_history,
+  list_memories, pin_memory, search_memories, unpin_memory,
+  update_memory_with_source,
 )
 import recalldory.memstore_import (
   export_memories, generate_agents_md, import_memories,
@@ -46,7 +47,7 @@ type async Main {
 
 fn run_with_db(cmd: DbCommand, out: Stdout) {
   match cmd {
-    case Add(content, tags, scope, pin) -> {
+    case Add(content, tags, scope, pin, source) -> {
       let db_result = if scope == 'global' {
         open_global_database
       } else {
@@ -57,7 +58,9 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
         case Ok(db) -> {
           let mut database = db
 
-          match add_memory(database, content, tags, scope, pin) {
+          match
+            add_memory_with_source(database, content, tags, scope, pin, source)
+          {
             case Ok(result) -> {
               let dedup = if result.deduplicated { 'true' } else { 'false' }
               let contra = if result.contradiction { 'true' } else { 'false' }
@@ -289,7 +292,7 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
       }
     }
     case Stats -> stats_both_dbs(out)
-    case Update(id, content, tags, scope) -> {
+    case Update(id, content, tags, scope, source) -> {
       let db_result = if scope == 'global' {
         open_global_database
       } else {
@@ -300,7 +303,16 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
         case Ok(db) -> {
           let mut database = db
 
-          match update_memory(database, id, content, tags, scope) {
+          match
+            update_memory_with_source(
+              database,
+              id,
+              content,
+              tags,
+              scope,
+              source,
+            )
+          {
             case Ok(new_id) -> {
               database.close
               out.print(
