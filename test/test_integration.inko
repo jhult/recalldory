@@ -125,6 +125,40 @@ fn pub tests(t: mut Tests) {
     db.close
   })
 
+  t.test('add_memory strips invisible Unicode characters', fn (t) {
+    let mut db = test_db('add_sanitize')
+
+    match add_memory(db, 'a\u{200B}b\u{FEFF}c', '', 'project', false) {
+      case Ok(_) -> {}
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    match list_memories(db, '', '', 10, Option.None) {
+      case Ok(mems) -> {
+        t.equal(mems.size, 1)
+
+        match mems.get(0) {
+          case Ok(m) -> t.equal(m.content, 'abc')
+          case Error(_) -> panic('expected memory')
+        }
+      }
+      case Error(e) -> panic('list failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('add_memory rejects content that is entirely invisible', fn (t) {
+    let mut db = test_db('add_sanitize_empty')
+
+    match add_memory(db, '\u{200B}\u{FEFF}', '', 'project', false) {
+      case Ok(_) -> t.true(false)
+      case Error(e) -> t.true(e.contains?('invisible'))
+    }
+
+    db.close
+  })
+
   # --- search_memories ---
 
   t.test('search_memories finds matching content', fn (t) {

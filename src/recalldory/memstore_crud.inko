@@ -14,7 +14,7 @@ import recalldory.memstore_helpers (
   bind_text, bind_text_or_err, exec_sql, exec_with_int, exec_with_two_ints,
   rollback_or_error,
 )
-import recalldory.text (sanitize_fts5_query)
+import recalldory.text (sanitize_fts5_query, strip_invisible_unicode)
 
 # --- Core CRUD operations ---
 
@@ -225,12 +225,20 @@ fn pub add_memory_inner(
   scope: String,
   pin: Bool,
 ) -> Result[AddResult, String] {
-  if content.size > MAX_CONTENT_SIZE {
+  let clean_content = strip_invisible_unicode(content)
+
+  if clean_content == '' {
+    return Result.Error(
+      'Content is empty after removing invisible Unicode characters',
+    )
+  }
+
+  if clean_content.size > MAX_CONTENT_SIZE {
     return Result.Error('Content exceeds maximum size of 64KB')
   }
 
-  let hash = sha256_hash(content)
-  let simhash_val = simhash(content)
+  let hash = sha256_hash(clean_content)
+  let simhash_val = simhash(clean_content)
   let status = if pin { STATUS_PINNED } else { STATUS_ACTIVE }
 
   # Check for exact and near-duplicates
@@ -272,7 +280,7 @@ fn pub add_memory_inner(
 
   # Check for contradictions before inserting
   let (is_contradiction, contradicting_ids) = match
-    check_contradiction(db, content)
+    check_contradiction(db, clean_content)
   {
     case Ok(result) -> result
     case Error(e) -> return Result.Error(e)
@@ -306,7 +314,7 @@ fn pub add_memory_inner(
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_text_or_err(mut insert_stmt, 1, content) {
+  match bind_text_or_err(mut insert_stmt, 1, clean_content) {
     case Ok(_) -> {}
     case Error(e) -> return Result.Error(e)
   }
@@ -771,7 +779,9 @@ fn update_memory_inner(
   tags: String,
   scope: String,
 ) -> Result[Int, String] {
-  if content.size > MAX_CONTENT_SIZE {
+  let clean_content = strip_invisible_unicode(content)
+
+  if clean_content.size > MAX_CONTENT_SIZE {
     return Result.Error('Content exceeds maximum size of 64KB')
   }
 
@@ -785,7 +795,7 @@ fn update_memory_inner(
   let old_scope = if scope == '' { old.scope.to_string } else { scope }
 
   # Check for content_hash collision before superseding old memory
-  let hash = sha256_hash(content)
+  let hash = sha256_hash(clean_content)
   let mut coll_stmt = match
     db.prepare('SELECT 1 FROM memories WHERE content_hash = ? AND id != ?')
   {
@@ -824,7 +834,7 @@ fn update_memory_inner(
   }
 
   # Create new memory with parent_id pointing to old memory
-  let simhash_val = simhash(content)
+  let simhash_val = simhash(clean_content)
   let band1 = simhash_substr(simhash_val, 0, 2)
   let band2 = simhash_substr(simhash_val, 2, 2)
   let band3 = simhash_substr(simhash_val, 4, 2)
@@ -836,7 +846,7 @@ fn update_memory_inner(
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
   }
 
-  match bind_text_or_err(mut insert_stmt, 1, content) {
+  match bind_text_or_err(mut insert_stmt, 1, clean_content) {
     case Ok(_) -> {}
     case Error(e) -> return Result.Error(e)
   }
