@@ -6,6 +6,9 @@ set -euo pipefail
 REPO="jhult/recalldory"
 SKILL_SRC=".claude/skills/recalldory/SKILL.md"
 
+# Optional: pin a specific release version (e.g. RECALLDORY_VERSION=1.2.3).
+RECALLDORY_VERSION="${RECALLDORY_VERSION:-}"
+
 # ANSI codes (disabled when not a terminal)
 RED='' GREEN='' YELLOW='' BOLD='' RESET=''
 if [ -t 1 ]; then
@@ -21,6 +24,17 @@ needs_tool() {
     command -v "$1" >/dev/null 2>&1 || die "Required tool not found: $1"
 }
 
+# Print the SHA-256 of a file using whichever tool is available.
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        die "No sha256 tool found (need sha256sum or shasum) to verify the download"
+    fi
+}
+
 show_help() {
     cat <<'EOF'
 Usage: install.sh [options]
@@ -33,6 +47,11 @@ Options:
   --skip-hook        Skip memory injection hook registration
   --skip-skill       Skip Claude Code skill installation
   -h, --help         Show this help message
+
+Environment:
+  RECALLDORY_VERSION Pin a specific release version (e.g. 1.2.3). Defaults to the
+                     latest release. Downloads are verified against the release's
+                     SHA256SUMS file.
 
 Platforms detected automatically:
   macOS  arm64      -> arm64-mac-native
@@ -112,18 +131,27 @@ if [ -z "$TARGET" ]; then
     info "Detected platform: ${TARGET}"
 fi
 
-# --- Find latest release ---
+# --- Resolve release version ---
 
-info "Finding latest release..."
-if ! RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null)"; then
-    die "Failed to fetch release info from GitHub. Check your connection and that releases exist at https://github.com/${REPO}/releases"
-fi
+if [ -n "$RECALLDORY_VERSION" ]; then
+    # Accept both "1.2.3" and "v1.2.3".
+    case "$RECALLDORY_VERSION" in
+        v*) TAG="$RECALLDORY_VERSION" ;;
+        *)  TAG="v${RECALLDORY_VERSION}" ;;
+    esac
+    info "Using requested version: ${TAG}"
+else
+    info "Finding latest release..."
+    if ! RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null)"; then
+        die "Failed to fetch release info from GitHub. Check your connection and that releases exist at https://github.com/${REPO}/releases"
+    fi
 
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -m1 '"tag_name"\s*:' | sed -E 's/.*"tag_name"\s*:\s*"([^"]+)".*/\1/' || true)"
-if [ -z "$TAG" ]; then
-    die "Could not determine latest release version"
+    TAG="$(printf '%s' "$RELEASE_JSON" | grep -m1 '"tag_name"\s*:' | sed -E 's/.*"tag_name"\s*:\s*"([^"]+)".*/\1/' || true)"
+    if [ -z "$TAG" ]; then
+        die "Could not determine latest release version"
+    fi
+    info "Latest version: ${TAG}"
 fi
-info "Latest version: ${TAG}"
 
 # --- Download and install binary ---
 
@@ -133,10 +161,33 @@ DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/recalldory-${T
 
 info "Downloading recalldory-${TARGET}..."
 mkdir -p "$BINDIR"
-if ! curl -fSL -o "$BINARY" "$DOWNLOAD_URL"; then
+# Download and verify into a temporary file, then move into place atomically so
+# an interrupted or failing install never leaves a partial binary behind.
+TMP_BINARY="${BINARY}.tmp.$$"
+trap 'rm -f "$TMP_BINARY"' EXIT
+if ! curl -fSL -o "$TMP_BINARY" "$DOWNLOAD_URL"; then
     die "Failed to download from ${DOWNLOAD_URL}. The '${TARGET}' target may not have a pre-built binary."
 fi
-chmod +x "$BINARY"
+
+# Verify the published checksum before executing anything.
+SUMS_URL="https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS"
+SUMS="$(curl -fsSL "$SUMS_URL" 2>/dev/null || true)"
+if [ -z "$SUMS" ]; then
+    die "Could not download SHA256SUMS from ${SUMS_URL}; refusing to install an unverified binary"
+fi
+EXPECTED_SHA="$(printf '%s\n' "$SUMS" | awk -v name="recalldory-${TARGET}" '$2 == name {print $1}' | head -1)"
+if [ -z "$EXPECTED_SHA" ]; then
+    die "SHA256SUMS does not contain an entry for recalldory-${TARGET}"
+fi
+ACTUAL_SHA="$(sha256_of "$TMP_BINARY")"
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+    die "Checksum mismatch for recalldory-${TARGET} (expected ${EXPECTED_SHA}, got ${ACTUAL_SHA})"
+fi
+info "Verified checksum for recalldory-${TARGET}"
+
+chmod +x "$TMP_BINARY"
+mv -f "$TMP_BINARY" "$BINARY"
+trap - EXIT
 info "Installed binary to ${BINARY}"
 
 # --- Install Claude Code skill ---
@@ -184,7 +235,14 @@ add_to_path() {
             info "Restart your shell or run: source ${conf_file}"
             ;;
         zsh|bash)
-            local rc="${HOME}/.${shell_name}rc"
+            local rc
+            if [ "$shell_name" = "bash" ] && [ "$(uname -s)" = "Darwin" ]; then
+                # macOS login shells read ~/.bash_profile, not ~/.bashrc.
+                rc="${HOME}/.bash_profile"
+            else
+                rc="${HOME}/.${shell_name}rc"
+            fi
+
             if [ -f "$rc" ] && grep -qF '# recalldory' "$rc" 2>/dev/null; then
                 info "PATH already configured in ${rc}"
             else

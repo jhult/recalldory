@@ -48,9 +48,9 @@ sequenceDiagram
 curl -fsSL https://raw.githubusercontent.com/jhult/recalldory/trunk/install.sh | bash
 ```
 
-This downloads the latest binary for your platform, installs the Claude Code skill to `~/.claude/skills/recalldory/`, adds `~/.local/bin` to your PATH (if needed), and runs `recalldory hook register`. Re-running upgrades to the latest version.
+This downloads the latest binary for your platform, installs the Claude Code skill to `~/.claude/skills/recalldory/`, adds `~/.local/bin` to your PATH (if needed), and runs `recalldory hook register`. Re-running upgrades to the latest version. Downloads are verified against the release's `SHA256SUMS` file before the binary is installed.
 
-Options: `--prefix DIR` (default: `~/.local`), `--target TARGET` (override platform detection), `--skip-hook`, `--skip-skill`.
+Options: `--prefix DIR` (default: `~/.local`), `--target TARGET` (override platform detection), `--skip-hook`, `--skip-skill`. Set `RECALLDORY_VERSION` (e.g. `RECALLDORY_VERSION=1.2.3`) to install a specific release instead of the latest.
 
 ### Manual download
 
@@ -66,6 +66,13 @@ Download the latest release for your platform from the [Releases page](https://g
 | `recalldory-arm64-mac-native` | macOS Apple Silicon |
 
 [SQLite](https://www.sqlite.org/) is statically linked into all binaries. [Apple does not guarantee binary compatibility at the kernel syscall level](https://developer.apple.com/library/archive/qa/1118/_index.html), so macOS builds still dynamically link system libraries (libSystem, Security, CoreFoundation), but SQLite is embedded via `-force_load`.
+
+Each release also publishes a `SHA256SUMS` file. Verify your download before running it:
+
+```bash
+curl -fsSLO https://github.com/jhult/recalldory/releases/latest/download/SHA256SUMS
+shasum -a 256 -c SHA256SUMS   # or: sha256sum -c SHA256SUMS
+```
 
 Then install the Claude Code skill and register the memory injection hook:
 

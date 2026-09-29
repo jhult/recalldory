@@ -3,12 +3,12 @@ import "package://github.com/jdx/hk/releases/download/v2.2.0/hk@2.2.0#/Builtins.
 
 local linters = new Mapping<String, Step> {
     ["inko-fmt"] {
-        glob = "*.inko"
+        glob = "**/*.inko"
         check = "inko fmt --check {{files}}"
         fix = "inko fmt {{files}}"
     }
     ["inko-test"] {
-        glob = "*.inko"
+        glob = "**/*.inko"
         check = "inko test"
     }
 }

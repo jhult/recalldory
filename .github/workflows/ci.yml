@@ -8,16 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. 1.0.0)"
-        required: true
+        description: "Release version (e.g. 1.0.0). Defaults to the latest git tag."
+        required: false
         type: string
 
 # Restrict default token permissions workflow-wide
 permissions: {}
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   test:
@@ -25,6 +21,11 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions: {}
+    # Only cancel superseded test runs; never cancel an in-flight release,
+    # which would leave a git tag without a published release.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     container:
       image: ghcr.io/inko-lang/inko@sha256:e36bd49b1bc37d580849e749ae5884864e30a750d1f870e418fafc629a87c49f
     steps:
@@ -111,6 +112,11 @@ jobs:
           echo "Found binary at: $BINARY"
           mv "$BINARY" "build/recalldory-$TARGET"
 
+      - name: Smoke test
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ./build/recalldory-$TARGET --version
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -141,7 +147,7 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
       - name: Install Inko
-        run: brew install --HEAD inko
+        run: brew install inko
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
@@ -197,6 +203,11 @@ jobs:
           echo "Found binary at: $BINARY"
           mv "$BINARY" "build/recalldory-$TARGET"
 
+      - name: Smoke test
+        env:
+          TARGET: ${{ matrix.target }}
+        run: ./build/recalldory-$TARGET --version
+
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -228,6 +239,12 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum recalldory-* > SHA256SUMS
+          cat SHA256SUMS
 
       - name: Create GitHub release
         env:
