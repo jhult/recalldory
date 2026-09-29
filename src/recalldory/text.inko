@@ -91,10 +91,11 @@ fn pub extract_entities(bytes: ref ByteArray) -> Array[String] {
     } else if in_word {
       if word_bytes.size > 2 {
         let word_str = word_bytes.clone.into_string
+        let lower = to_lowercase(word_str)
         let mut is_common = false
 
         for common in COMMON_WORDS.iter {
-          if word_str == common {
+          if lower == common {
             is_common = true
             break
           }
@@ -111,11 +112,12 @@ fn pub extract_entities(bytes: ref ByteArray) -> Array[String] {
   # Handle last word
   if in_word and word_bytes.size > 2 {
     let word_str = word_bytes.clone.into_string
+    let lower = to_lowercase(word_str)
 
     let mut is_common = false
 
     for common in COMMON_WORDS.iter {
-      if word_str == common { is_common = true }
+      if lower == common { is_common = true }
     }
 
     if !is_common { entities.push(word_str) }
@@ -140,7 +142,7 @@ fn pub has_negation_words(bytes: ref ByteArray) -> Bool {
       word_bytes.push(byte)
       in_word = true
     } else if in_word {
-      let word_str = word_bytes.clone.into_string
+      let word_str = to_lowercase(word_bytes.clone.into_string)
 
       for neg in NEGATION_WORDS.iter {
         if word_str == neg { return true }
@@ -152,7 +154,7 @@ fn pub has_negation_words(bytes: ref ByteArray) -> Bool {
   }
 
   if in_word {
-    let word_str = word_bytes.clone.into_string
+    let word_str = to_lowercase(word_bytes.clone.into_string)
 
     for neg in NEGATION_WORDS.iter {
       if word_str == neg { return true }
@@ -199,37 +201,57 @@ fn pub count_entity_overlap(
 # result in unexpected matches or performance for untrusted input.
 fn pub sanitize_fts5_query(query: String) -> String {
   let bytes = query.to_byte_array
-  let mut result = ByteArray.new
+  let mut escaped = ByteArray.new
 
   for byte in bytes.iter {
     # Escape double quotes by doubling them
     if byte == 34 {
-      result.push(34)
-      result.push(34)
+      escaped.push(34)
+      escaped.push(34)
     } else if byte == 40 or byte == 41 {
       # ( )
       # Replace parentheses with spaces to avoid FTS5 syntax errors
-      result.push(32)
+      escaped.push(32)
     } else if byte < 32 or byte == 127 {
       # Control characters - just remove them
     } else {
-      result.push(byte)
+      escaped.push(byte)
     }
   }
 
-  result.into_string
+  let escaped_str = escaped.into_string
+
+  # A query with no terms left is not a valid MATCH expression; callers treat an
+  # empty string as "no results".
+  if escaped_str.trim.size == 0 { return '' }
+
+  # If the query contains a double quote, wrap the whole thing in a phrase so
+  # the doubled quotes act as escapes. Without the outer wrapping a lone quote
+  # (e.g. `say "hello`) is emitted as a bare `""` token that some FTS5 builds
+  # reject with a syntax error. Queries without quotes are left intact so power
+  # users can still use prefix/boolean operators.
+  if query.contains?('"') { return '"' + escaped_str + '"' }
+
+  escaped_str
 }
 
-# Return the UTF-8 sequence length for a leading byte.
+# Return the UTF-8 sequence length for a leading byte, or 0 when the byte
+# cannot start a sequence (stray continuation byte, overlong lead, or a value
+# beyond U+10FFFF).
 fn utf8_length(lead: Int) -> Int {
-  if lead < 194 {
+  if lead < 128 {
     1
+  } else if lead < 194 {
+    # 0x80-0xBF are stray continuation bytes; 0xC0/0xC1 are overlong leads.
+    0
   } else if lead < 224 {
     2
   } else if lead < 240 {
     3
-  } else {
+  } else if lead < 245 {
     4
+  } else {
+    0
   }
 }
 
@@ -263,6 +285,39 @@ fn decode_codepoint(bytes: ref ByteArray, i: Int, len: Int) -> Int {
   }
 }
 
+# Is the UTF-8 sequence starting at `i` with length `len` well-formed? Rejects
+# stray continuation bytes, overlong encodings, surrogate code points and values
+# beyond U+10FFFF so malformed input can be dropped instead of passed through.
+fn utf8_valid_at(bytes: ref ByteArray, i: Int, len: Int) -> Bool {
+  if len == 0 { return false }
+
+  if i + len > bytes.size { return false }
+
+  let mut k = 1
+
+  while k < len {
+    let b = byte_at(bytes, i + k)
+
+    if b < 128 or b > 191 { return false }
+
+    k = k + 1
+  }
+
+  let cp = decode_codepoint(bytes, i, len)
+
+  if cp > 0x10FFFF { return false }
+
+  if cp >= 0xD800 and cp <= 0xDFFF { return false }
+
+  if len == 2 and cp < 0x80 { return false }
+
+  if len == 3 and cp < 0x800 { return false }
+
+  if len == 4 and cp < 0x10000 { return false }
+
+  true
+}
+
 # Returns true if the code point is invisible or a bidirectional formatting
 # character. Such characters are used to smuggle hidden instructions into text
 # that is later injected into an LLM's system prompt.
@@ -275,6 +330,18 @@ fn is_invisible_codepoint(cp: Int) -> Bool {
 
   # Mongolian vowel separator
   if cp == 0x180E { return true }
+
+  # Combining grapheme joiner
+  if cp == 0x034F { return true }
+
+  # Mongolian free variation selectors
+  if cp >= 0x180B and cp <= 0x180F { return true }
+
+  # Variation selectors (U+FE00-U+FE0F) and the supplementary block used to
+  # smuggle hidden variation sequences.
+  if cp >= 0xFE00 and cp <= 0xFE0F { return true }
+
+  if cp >= 0xE0100 and cp <= 0xE01EF { return true }
 
   # Zero-width space/joiners and directional marks (U+200B-U+200F)
   if cp >= 0x200B and cp <= 0x200F { return true }
@@ -325,12 +392,10 @@ fn pub strip_invisible_unicode(s: String) -> String {
     } else {
       let len = utf8_length(b)
 
-      if i + len > size {
-        # Truncated sequence at the end: copy the remaining bytes unchanged.
-        while i < size {
-          result.push(byte_at(ref bytes, i))
-          i = i + 1
-        }
+      if !utf8_valid_at(ref bytes, i, len) {
+        # Malformed UTF-8: drop the offending byte rather than pass it through
+        # unsanitized.
+        i = i + 1
       } else if is_invisible_codepoint(decode_codepoint(ref bytes, i, len)) {
         i = i + len
       } else {
@@ -363,69 +428,106 @@ fn pub ellipsize(s: String, max: Int) -> String {
     let b = byte_at(ref bytes, i)
     let len = utf8_length(b)
 
-    if i + len > limit { break }
+    if !utf8_valid_at(ref bytes, i, len) {
+      # Skip malformed bytes rather than risk splitting a sequence.
+      i = i + 1
+    } else if i + len > limit {
+      break
+    } else {
+      let mut k = 0
 
-    let mut k = 0
+      while k < len {
+        result.push(byte_at(ref bytes, i + k))
+        k = k + 1
+      }
 
-    while k < len {
-      result.push(byte_at(ref bytes, i + k))
-      k = k + 1
+      i = i + len
     }
-
-    i = i + len
   }
 
   result.into_string + '...'
 }
 
+# Append `\uXXXX` for the low 16 bits of `value` to `result`.
+fn push_json_unicode_escape(result: mut ByteArray, value: Int) {
+  let hex_chars = '0123456789abcdef'.to_byte_array
+
+  result.push(92) # backslash
+  result.push(117) # u
+
+  let mut shift = 12
+
+  while shift >= 0 {
+    let nibble = (value >> shift) & 15
+
+    match hex_chars.get(nibble) {
+      case Ok(h) -> result.push(h)
+      case Error(_) -> result.push(48)
+    }
+
+    shift = shift - 4
+  }
+}
+
 # Escape a string for safe embedding in JSON (handles quotes, backslash, control chars).
 fn pub escape_json(s: String) -> String {
-  let hex_chars = '0123456789abcdef'.to_byte_array
   let bytes = s.to_byte_array
+  let size = bytes.size
   let mut result = ByteArray.new
+  let mut i = 0
 
-  for byte in bytes.iter {
+  while i < size {
+    let byte = byte_at(ref bytes, i)
+
     if byte == 34 {
       result.push(92)
       result.push(34)
+      i = i + 1
     } else if byte == 92 {
       result.push(92)
       result.push(92)
+      i = i + 1
     } else if byte == 10 {
       result.push(92)
       result.push(110)
+      i = i + 1
     } else if byte == 13 {
       result.push(92)
       result.push(114)
+      i = i + 1
     } else if byte == 9 {
       result.push(92)
       result.push(116)
+      i = i + 1
     } else if byte == 8 {
       result.push(92)
       result.push(98)
+      i = i + 1
     } else if byte == 12 {
       result.push(92)
       result.push(102)
+      i = i + 1
     } else if byte < 32 {
-      result.push(92) # \
-      result.push(117) # u
-      result.push(48) # 0
-      result.push(48) # 0
-
-      let hi = (byte >> 4) & 15
-      let lo = byte & 15
-
-      match hex_chars.get(hi) {
-        case Ok(h) -> result.push(h)
-        case Error(_) -> result.push(48)
-      }
-
-      match hex_chars.get(lo) {
-        case Ok(l) -> result.push(l)
-        case Error(_) -> result.push(48)
-      }
+      push_json_unicode_escape(mut result, byte)
+      i = i + 1
+    } else if
+      byte == 0xE2
+        and i + 2 < size
+        and byte_at(ref bytes, i + 1) == 0x80
+        and (
+          byte_at(ref bytes, i + 2) == 0xA8 or byte_at(ref bytes, i + 2) == 0xA9
+        )
+    {
+      # U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR are valid UTF-8 but
+      # break a JavaScript string literal when this JSON is embedded in a script.
+      push_json_unicode_escape(
+        mut result,
+        0x2028 + (byte_at(ref bytes, i + 2) - 0xA8),
+      )
+      i = i + 3
     } else {
       result.push(byte)
+      i = i + 1
     }
   }
 

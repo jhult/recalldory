@@ -190,8 +190,21 @@ fn pub tests(t: mut Tests) {
     t.equal(sanitize_fts5_query('hello'), 'hello')
   })
 
-  t.test('sanitize_fts5_query escapes double quotes', fn (t) {
-    t.equal(sanitize_fts5_query('say "hello"'), 'say ""hello""')
+  t.test(
+    'sanitize_fts5_query escapes double quotes with phrase wrapping',
+    fn (t) { t.equal(sanitize_fts5_query('say "hello"'), '"say ""hello"""') },
+  )
+
+  t.test('sanitize_fts5_query wraps a lone quote in a phrase', fn (t) {
+    t.equal(sanitize_fts5_query('say "hello'), '"say ""hello"')
+  })
+
+  t.test('sanitize_fts5_query returns empty for whitespace only', fn (t) {
+    t.equal(sanitize_fts5_query('   '), '')
+  })
+
+  t.test('sanitize_fts5_query preserves quote-free operators', fn (t) {
+    t.equal(sanitize_fts5_query('rust AND python'), 'rust AND python')
   })
 
   t.test('sanitize_fts5_query handles empty string', fn (t) {
@@ -218,6 +231,18 @@ fn pub tests(t: mut Tests) {
 
   t.test('strip_invisible_unicode removes tag characters', fn (t) {
     t.equal(strip_invisible_unicode('x\u{E0041}y'), 'xy')
+  })
+
+  t.test('strip_invisible_unicode removes variation selectors', fn (t) {
+    t.equal(strip_invisible_unicode('a\u{FE00}b\u{FE0F}c'), 'abc')
+  })
+
+  t.test('strip_invisible_unicode removes combining grapheme joiner', fn (t) {
+    t.equal(strip_invisible_unicode('a\u{34F}b'), 'ab')
+  })
+
+  t.test('strip_invisible_unicode removes Mongolian FVS', fn (t) {
+    t.equal(strip_invisible_unicode('a\u{180B}b'), 'ab')
   })
 
   t.test(
@@ -313,6 +338,10 @@ fn pub tests(t: mut Tests) {
     t.equal(escape_json(''), '')
   })
 
+  t.test('escape_json escapes U+2028 and U+2029', fn (t) {
+    t.equal(escape_json('a\u{2028}b\u{2029}c'), 'a\\u2028b\\u2029c')
+  })
+
   # --- extract_entities ---
 
   t.test('extract_entities returns words longer than 3 chars', fn (t) {
@@ -327,6 +356,13 @@ fn pub tests(t: mut Tests) {
     let entities = extract_entities(ref bytes)
 
     t.equal(entities.size, 2)
+  })
+
+  t.test('extract_entities excludes common words case-insensitively', fn (t) {
+    let bytes = 'This That With hello'.to_byte_array
+    let entities = extract_entities(ref bytes)
+
+    t.equal(entities.size, 1)
   })
 
   t.test('extract_entities excludes short words', fn (t) {
@@ -367,6 +403,12 @@ fn pub tests(t: mut Tests) {
     let bytes = 'always use strong types'.to_byte_array
 
     t.false(has_negation_words(ref bytes))
+  })
+
+  t.test('has_negation_words is case-insensitive', fn (t) {
+    let bytes = 'NOT correct'.to_byte_array
+
+    t.true(has_negation_words(ref bytes))
   })
 
   t.test('has_negation_words returns false for empty input', fn (t) {
