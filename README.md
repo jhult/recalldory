@@ -119,6 +119,8 @@ inko build --release \
 
 ## Commands
 
+Data commands emit JSON on stdout. When a command fails it still writes the JSON error object to stdout, writes a human-readable diagnostic to stderr, and exits with a non-zero status, so scripts and agents can detect failure.
+
 ### Core Operations
 
 | Command | Description |
@@ -144,8 +146,8 @@ inko build --release \
 | Command | Description |
 |---------|-------------|
 | `contradictions [--resolve <id>]` | Detect potential contradictions between memories |
-| `export` | Full JSON backup of all memories |
-| `import <file>` | Restore from JSON backup |
+| `export` | Full JSON backup of all memories (status, timestamps, flags and strength are restored faithfully by `import`) |
+| `import <file>` | Restore from JSON backup; entries that already exist are reported as `deduplicated` rather than counting as `imported` |
 | `agents-md [--path P]` | Generate AGENTS.md from pinned + anti-pattern memories |
 | `stats` | Show memory statistics |
 
