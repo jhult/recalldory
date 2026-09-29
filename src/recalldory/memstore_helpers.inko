@@ -37,6 +37,31 @@ fn pub bind_text_or_err(
   }
 }
 
+fn pub bind_double(
+  db_stmt: mut Statement,
+  idx: Int,
+  val: Float64,
+) -> Result[Nil, String] {
+  match db_stmt.bind_double(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> Result.Error('Failed to bind: ${e}')
+  }
+}
+
+fn pub bind_double_or_err(
+  stmt: mut Statement,
+  idx: Int,
+  val: Float64,
+) -> Result[Nil, String] {
+  match stmt.bind_double(idx, val) {
+    case Ok(_) -> Result.Ok(nil)
+    case Error(e) -> {
+      stmt.finalize
+      Result.Error(e)
+    }
+  }
+}
+
 fn pub bind_int(
   db_stmt: mut Statement,
   idx: Int,

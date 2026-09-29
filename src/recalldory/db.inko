@@ -1,5 +1,7 @@
 import extern "sqlite3"
 
+import std.reflect (size_of)
+
 # SQLite constants
 let pub SQLITE_ROW = 100
 let pub SQLITE_DONE = 101
@@ -91,8 +93,12 @@ fn extern free(ptr: Pointer[Uint8])
 impl Database {
   # Open a SQLite database at the given path. Sets a 5-second busy timeout.
   fn pub static new(path: String) -> Result[Database, String] {
-    # Allocate 8 bytes for the output pointer (64-bit)
-    let db_ptr_addr = malloc(8 as Uint64)
+    # Allocate space for the output pointer, sized for the host.
+    let db_ptr_addr = malloc(size_of[Pointer[Uint8]] as Uint64)
+
+    if db_ptr_addr as Int == 0 {
+      return Result.Error('Failed to allocate memory for database handle')
+    }
 
     let path_bytes = to_cstr(path)
     let result = sqlite3_open(path_bytes.pointer, db_ptr_addr)
@@ -156,7 +162,11 @@ impl Database {
     if @handle as Int == 0 { return Result.Error('Database not open') }
 
     let sql_bytes = to_cstr(sql)
-    let stmt_ptr_addr = malloc(8 as Uint64)
+    let stmt_ptr_addr = malloc(size_of[Pointer[Uint8]] as Uint64)
+
+    if stmt_ptr_addr as Int == 0 {
+      return Result.Error('Failed to allocate memory for statement handle')
+    }
 
     let result = sqlite3_prepare_v2(
       @handle,
@@ -359,9 +369,7 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
 
       -- Contradiction tracking
       is_contradiction INTEGER DEFAULT 0,
-      contradicts_id   INTEGER REFERENCES memories(id),
-
-      UNIQUE(content_hash)
+      contradicts_id   INTEGER REFERENCES memories(id)
     );
 
     -- Content-synced FTS5 for keyword search
@@ -399,6 +407,153 @@ fn pub init_schema(db: mut Database) -> Result[Nil, String] {
   db.exec(schema)
 }
 
+# Roll back a transaction, folding any rollback failure into the original error.
+fn rollback_or_error(db: mut Database, original_error: String) -> String {
+  match db.exec('ROLLBACK') {
+    case Ok(_) -> original_error
+    case Error(re) -> '${original_error} (rollback also failed: ${re})'
+  }
+}
+
+# Older databases declared a table-level UNIQUE(content_hash), which applies to
+# superseded rows too. That makes it impossible to re-add content that was
+# previously superseded, contradicting the partial idx_memories_content_hash_active
+# index and the documented dedup behaviour. SQLite cannot drop a table
+# constraint, so rebuild the table without it.
+fn drop_legacy_content_hash_unique(db: mut Database) -> Result[Nil, String] {
+  let mut stmt = match
+    db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='memories'",
+    )
+  {
+    case Ok(s) -> s
+    case Error(e) -> {
+      return Result.Error('Failed to inspect memories schema: ${e}')
+    }
+  }
+
+  let mut legacy = false
+
+  if stmt.step == SQLITE_ROW {
+    if stmt.column_text(0).contains?('UNIQUE(content_hash)') { legacy = true }
+  }
+
+  stmt.finalize
+
+  if !legacy { return Result.Ok(nil) }
+
+  match db.exec('BEGIN') {
+    case Error(e) -> return Result.Error('Failed to begin schema rebuild: ${e}')
+    case Ok(_) -> {}
+  }
+
+  # Drop the content-sync triggers first: they reference the old table and the
+  # DROP TABLE below would otherwise leave the FTS index inconsistent.
+  let _ = db.exec('DROP TRIGGER IF EXISTS memories_fts_ai')
+  let _ = db.exec('DROP TRIGGER IF EXISTS memories_fts_ad')
+  let _ = db.exec('DROP TRIGGER IF EXISTS memories_fts_au')
+
+  let create_new = "
+    CREATE TABLE memories_new (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      content       TEXT NOT NULL,
+      content_hash  TEXT NOT NULL,
+      summary       TEXT,
+      source        TEXT DEFAULT '',
+      tags          TEXT DEFAULT '[]',
+      scope         TEXT DEFAULT 'project',
+      status        TEXT DEFAULT 'active',
+      is_negative   INTEGER DEFAULT 0,
+      strength      REAL DEFAULT 0.5,
+      access_count  INTEGER DEFAULT 0,
+      decay_rate    REAL DEFAULT 0.01,
+      helpful_count INTEGER DEFAULT 0,
+      harmful_count INTEGER DEFAULT 0,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      last_accessed TEXT NOT NULL DEFAULT (datetime('now')),
+      simhash       TEXT,
+      simhash_band1 TEXT,
+      simhash_band2 TEXT,
+      simhash_band3 TEXT,
+      simhash_band4 TEXT,
+      storage_strength   REAL DEFAULT 0.1,
+      retrieval_strength REAL DEFAULT 1.0,
+      parent_id     INTEGER REFERENCES memories(id),
+      is_contradiction INTEGER DEFAULT 0,
+      contradicts_id   INTEGER REFERENCES memories(id)
+    )"
+
+  match db.exec(create_new) {
+    case Error(e) -> {
+      return Result.Error(
+        rollback_or_error(db, 'Failed to create rebuilt table: ${e}'),
+      )
+    }
+    case Ok(_) -> {}
+  }
+
+  let copy_sql = '
+    INSERT INTO memories_new
+      SELECT id, content, content_hash, summary, source, tags, scope, status,
+             is_negative, strength, access_count, decay_rate, helpful_count,
+             harmful_count, created_at, updated_at, last_accessed, simhash,
+             simhash_band1, simhash_band2, simhash_band3, simhash_band4,
+             storage_strength, retrieval_strength, parent_id, is_contradiction,
+             contradicts_id
+        FROM memories'
+
+  match db.exec(copy_sql) {
+    case Error(e) -> {
+      return Result.Error(
+        rollback_or_error(db, 'Failed to copy memories: ${e}'),
+      )
+    }
+    case Ok(_) -> {}
+  }
+
+  match db.exec('DROP TABLE memories') {
+    case Error(e) -> {
+      return Result.Error(
+        rollback_or_error(db, 'Failed to drop old table: ${e}'),
+      )
+    }
+    case Ok(_) -> {}
+  }
+
+  match db.exec('ALTER TABLE memories_new RENAME TO memories') {
+    case Error(e) -> {
+      return Result.Error(
+        rollback_or_error(db, 'Failed to rename rebuilt table: ${e}'),
+      )
+    }
+    case Ok(_) -> {}
+  }
+
+  match db.exec('COMMIT') {
+    case Error(e) -> return Result.Error(rollback_or_error(db, e))
+    case Ok(_) -> {}
+  }
+
+  # The rebuild dropped every index; recreate them all (and the FTS table)
+  # before migrate_fts re-adds the sync triggers.
+  match init_schema(db) {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
+  }
+
+  # Force the FTS index to be regenerated from the rebuilt table so search
+  # stays consistent (migrate_fts only recreates triggers, it does not rebuild).
+  match db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')") {
+    case Error(e) -> {
+      return Result.Error('Failed to rebuild FTS after schema rebuild: ${e}')
+    }
+    case Ok(_) -> {}
+  }
+
+  Result.Ok(nil)
+}
+
 # Migrate existing databases to add new columns
 # SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we try and ignore errors
 fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
@@ -418,8 +573,22 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   ]
 
   for sql in migrations.iter {
-    # Try the migration - ignore errors (column already exists)
-    let _ = db.exec(sql)
+    match db.exec(sql) {
+      case Ok(_) -> {}
+      case Error(e) -> {
+        # Re-running the migration reports "duplicate column name" for columns
+        # that already exist; anything else is a real failure.
+        if !e.contains?('duplicate column name') {
+          return Result.Error('Schema migration failed: ${e}')
+        }
+      }
+    }
+  }
+
+  # Drop the legacy table-level UNIQUE(content_hash) constraint if present.
+  match drop_legacy_content_hash_unique(db) {
+    case Error(e) -> return Result.Error(e)
+    case Ok(_) -> {}
   }
 
   # Try to add indexes (ignore errors if already exist)
@@ -434,28 +603,47 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   ]
 
   for sql in indexes.iter {
-    let _ = db.exec(sql)
+    match db.exec(sql) {
+      case Ok(_) -> {}
+      case Error(e) -> return Result.Error('Failed to create index: ${e}')
+    }
   }
 
   # Populate LSH band columns for existing memories that have simhash but no bands
-  let _ = db.exec(
-    'UPDATE memories SET simhash_band1 = substr(simhash, 1, 2), simhash_band2 = substr(simhash, 3, 2), simhash_band3 = substr(simhash, 5, 2), simhash_band4 = substr(simhash, 7, 2) WHERE simhash IS NOT NULL AND simhash_band1 IS NULL',
-  )
+  match
+    db.exec(
+      'UPDATE memories SET simhash_band1 = substr(simhash, 1, 2), simhash_band2 = substr(simhash, 3, 2), simhash_band3 = substr(simhash, 5, 2), simhash_band4 = substr(simhash, 7, 2) WHERE simhash IS NOT NULL AND simhash_band1 IS NULL',
+    )
+  {
+    case Ok(_) -> {}
+    case Error(e) -> {
+      return Result.Error('Failed to backfill simhash bands: ${e}')
+    }
+  }
 
-  # Data migration: set storage_strength from strength (scale 0-1 to 0-10)
-  # and set retrieval_strength to 0.5 as neutral starting point.
-  # Use schema_version table to ensure this runs exactly once.
-  let _ = db.exec(
-    'CREATE TABLE IF NOT EXISTS schema_version (key TEXT PRIMARY KEY, value INTEGER NOT NULL)',
-  )
+  # Data migration: set storage_strength from strength (scale 0-1 to 0-10) and
+  # retrieval_strength to a neutral 0.5. Gated by schema_version so it runs
+  # exactly once.
+  match
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS schema_version (key TEXT PRIMARY KEY, value INTEGER NOT NULL)',
+    )
+  {
+    case Ok(_) -> {}
+    case Error(e) -> {
+      return Result.Error('Failed to create schema_version: ${e}')
+    }
+  }
+
   let mut version_stmt = match
     db.prepare(
       "SELECT value FROM schema_version WHERE key = 'strength_migration'",
     )
   {
     case Ok(s) -> s
-    case Error(_) -> return Result.Error('Failed to check schema version')
+    case Error(e) -> return Result.Error('Failed to check schema version: ${e}')
   }
+
   let already_migrated = if version_stmt.step == SQLITE_ROW {
     version_stmt.column_int(0) == 1
   } else {
@@ -465,18 +653,37 @@ fn pub migrate_schema(db: mut Database) -> Result[Nil, String] {
   version_stmt.finalize
 
   if !already_migrated {
-    let _ = db.exec(
-      'UPDATE memories SET storage_strength = strength * 10, retrieval_strength = 0.5 WHERE storage_strength = 0.1',
-    )
-    let _ = db.exec(
-      "INSERT OR IGNORE INTO schema_version (key, value) VALUES ('strength_migration', 1)",
-    )
+    match
+      db.exec(
+        'UPDATE memories SET storage_strength = strength * 10, retrieval_strength = 0.5 WHERE storage_strength = 0.1',
+      )
+    {
+      case Ok(_) -> {}
+      case Error(e) -> {
+        return Result.Error('Failed to migrate storage strength: ${e}')
+      }
+    }
   }
 
   # Migrate standalone FTS5 to content-synced FTS5 if needed
   match migrate_fts(db) {
     case Error(e) -> return Result.Error(e)
     case Ok(_) -> {}
+  }
+
+  # Record the strength migration only after every other step has succeeded, so
+  # a failure above leaves the marker unset and the migration is retried.
+  if !already_migrated {
+    match
+      db.exec(
+        "INSERT OR IGNORE INTO schema_version (key, value) VALUES ('strength_migration', 1)",
+      )
+    {
+      case Ok(_) -> {}
+      case Error(e) -> {
+        return Result.Error('Failed to record strength migration: ${e}')
+      }
+    }
   }
 
   Result.Ok(nil)
@@ -492,7 +699,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   let check_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('memories_fts_ai', 'memories_fts_ad', 'memories_fts_au')"
   let mut check_stmt = match db.prepare(check_sql) {
     case Ok(s) -> s
-    case Error(_) -> return Result.Ok(nil)
+    case Error(e) -> return Result.Error('Failed to check FTS triggers: ${e}')
   }
 
   let trigger_count = if check_stmt.step == SQLITE_ROW {
@@ -507,7 +714,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   let fts_exists_sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'"
   let mut fts_exists_stmt = match db.prepare(fts_exists_sql) {
     case Ok(s) -> s
-    case Error(_) -> return Result.Ok(nil)
+    case Error(e) -> return Result.Error('Failed to check FTS table: ${e}')
   }
 
   let fts_exists = if fts_exists_stmt.step == SQLITE_ROW {
@@ -526,7 +733,7 @@ fn pub migrate_fts(db: mut Database) -> Result[Nil, String] {
   let fts_check_sql = "SELECT sql FROM sqlite_master WHERE type='table' AND name='memories_fts'"
   let mut fts_stmt = match db.prepare(fts_check_sql) {
     case Ok(s) -> s
-    case Error(_) -> return Result.Ok(nil)
+    case Error(e) -> return Result.Error('Failed to inspect FTS table: ${e}')
   }
 
   let mut need_recreate = false

@@ -60,7 +60,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   let mut anti_patterns = 0
   let mut pruned = 0
 
-  let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND retrieval_strength > 0.05"
+  let decay_sql = "UPDATE memories SET retrieval_strength = MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)), strength = 0.7 * MAX(0.0, retrieval_strength * (1 - decay_rate * (julianday('now') - julianday(last_accessed)) * 24)) + 0.3 * (storage_strength / 10.0), updated_at = datetime('now') WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND status != '${STATUS_ANTI_PATTERN}' AND retrieval_strength > 0.05"
   let mut decay_stmt = match db.prepare(decay_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare decay: ${e}')
@@ -88,7 +88,10 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
   anti_patterns = db.changes
   anti_stmt.finalize
 
-  let prune_sql = "DELETE FROM memories WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND strength < 0.05"
+  # Anti-patterns are protected from decay and pruning: README states decay is
+  # for ranking only and that deletion requires explicit harmful feedback. A
+  # demoted anti-pattern must be removed manually via `forget`.
+  let prune_sql = "DELETE FROM memories WHERE status != '${STATUS_PINNED}' AND status != '${STATUS_SUPERSEDED}' AND status != '${STATUS_ANTI_PATTERN}' AND strength < 0.05"
   let mut prune_stmt = match db.prepare(prune_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare prune: ${e}')
@@ -113,7 +116,7 @@ fn maintain_memory_inner(db: mut Database) -> Result[MaintainStats, String] {
 
 # Return aggregate memory statistics (total, active, pinned, anti-pattern, avg strength).
 fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
-  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = '${STATUS_ACTIVE}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_PINNED}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_ANTI_PATTERN}' THEN 1 ELSE 0 END), SUM(strength), COUNT(*) FROM memories"
+  let sql = "SELECT COUNT(*), SUM(CASE WHEN status = '${STATUS_ACTIVE}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_PINNED}' THEN 1 ELSE 0 END), SUM(CASE WHEN status = '${STATUS_ANTI_PATTERN}' THEN 1 ELSE 0 END), SUM(strength) FROM memories"
   let mut stmt = match db.prepare(sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -126,8 +129,7 @@ fn pub get_stats(db: mut Database) -> Result[MemoryStats, String] {
         active: stmt.column_int(1),
         pinned: stmt.column_int(2),
         anti_pattern: stmt.column_int(3),
-        total_strength: stmt.column_int(4),
-        count: stmt.column_int(5),
+        total_strength: stmt.column_double(4) as Float,
       ),
     )
   } else {

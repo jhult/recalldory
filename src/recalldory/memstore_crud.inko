@@ -10,9 +10,9 @@ import recalldory.memory (AddResult, HistoryResult, Memory)
 import recalldory.memstore_contradiction (check_contradiction)
 import recalldory.memstore_helpers (
   MAX_CONTENT_SIZE, MEMORY_COLUMNS, STATUS_ACTIVE, STATUS_ANTI_PATTERN,
-  STATUS_PINNED, STATUS_SUPERSEDED, bind_int, bind_int_or_err, bind_null,
-  bind_text, bind_text_or_err, exec_sql, exec_with_int, exec_with_two_ints,
-  rollback_or_error,
+  STATUS_PINNED, STATUS_SUPERSEDED, bind_double_or_err, bind_int,
+  bind_int_or_err, bind_null, bind_text, bind_text_or_err, exec_sql,
+  exec_with_int, exec_with_two_ints, rollback_or_error,
 )
 import recalldory.text (sanitize_fts5_query, strip_invisible_unicode)
 
@@ -257,7 +257,10 @@ fn pub add_memory_inner(
   # Check for exact and near-duplicates
   match check_exact_duplicate(db, hash) {
     case Ok(Some((id, count))) -> {
-      let _ = touch_duplicate(db, id, count)
+      match touch_duplicate(db, id, count) {
+        case Ok(_) -> {}
+        case Error(e) -> return Result.Error(e)
+      }
 
       return Result.Ok(
         AddResult(
@@ -275,7 +278,10 @@ fn pub add_memory_inner(
 
   match check_near_duplicate(db, simhash_val) {
     case Ok(Some((id, count))) -> {
-      let _ = touch_duplicate(db, id, count)
+      match touch_duplicate(db, id, count) {
+        case Ok(_) -> {}
+        case Error(e) -> return Result.Error(e)
+      }
 
       return Result.Ok(
         AddResult(
@@ -321,7 +327,7 @@ fn pub add_memory_inner(
     }
   }
 
-  let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, is_contradiction, contradicts_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  let insert_sql = 'INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, is_contradiction, contradicts_id, source, storage_strength) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -409,6 +415,15 @@ fn pub add_memory_inner(
   }
 
   match bind_text_or_err(mut insert_stmt, 13, source) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  # Explicit initial storage strength: the 0-10 scale used by the strength
+  # migration (strength * 10, default strength 0.5). Without this, new rows
+  # fall back to the schema default of 0.1 and start far weaker than migrated
+  # rows (see storage_strength ticket).
+  match bind_double_or_err(mut insert_stmt, 14, 5.0 as Float64) {
     case Ok(_) -> {}
     case Error(e) -> return Result.Error(e)
   }
@@ -616,28 +631,32 @@ fn pub search_memories(
     let touch_sql = "UPDATE memories SET last_accessed = datetime('now'), retrieval_strength = MIN(1.0, retrieval_strength + 0.1), access_count = access_count + 1 WHERE id IN (${id_placeholders})"
     let mut touch_stmt = match db.prepare(touch_sql) {
       case Ok(s) -> s
-      case Error(_) -> return Result.Ok(results)
+      case Error(e) -> {
+        return Result.Error('Failed to prepare access update: ${e}')
+      }
     }
 
-    let mut ok = true
     let mut idx = 1
 
     for id in ids.iter {
-      if !ok { break }
-
       match touch_stmt.bind_int(idx, id) {
         case Ok(_) -> {}
-        case Error(_) -> ok = false
+        case Error(e) -> {
+          touch_stmt.finalize
+          return Result.Error('Failed to bind access update: ${e}')
+        }
       }
 
       idx = idx + 1
     }
 
-    if ok {
-      let _ = touch_stmt.step
-    }
+    let touch_result = touch_stmt.step
 
     touch_stmt.finalize
+
+    if touch_result != SQLITE_DONE {
+      return Result.Error('Failed to update access stats')
+    }
   }
 
   Result.Ok(results)
@@ -750,9 +769,11 @@ fn pub update_memory_with_source(
 
 # Metadata fetched from an existing memory for versioning.
 type ExistingMemory {
+  let @content: String
   let @tags: String
   let @scope: String
   let @source: String
+  let @status: String
   let @is_contradiction: Int
   let @contradicts_id: Option[Int]
 }
@@ -764,7 +785,7 @@ fn get_existing_memory(
 ) -> Result[ExistingMemory, String] {
   let mut stmt = match
     db.prepare(
-      'SELECT tags, scope, source, is_contradiction, contradicts_id FROM memories WHERE id = ?',
+      'SELECT content, tags, scope, source, status, is_contradiction, contradicts_id FROM memories WHERE id = ?',
     )
   {
     case Ok(s) -> s
@@ -777,11 +798,13 @@ fn get_existing_memory(
   }
 
   let result = if stmt.step == SQLITE_ROW {
-    let mut tags = stmt.column_text(0)
-    let mut scope = stmt.column_text(1)
-    let source = stmt.column_text(2)
-    let contradiction = stmt.column_int(3)
-    let contradicts_raw = stmt.column_int(4)
+    let content = stmt.column_text(0)
+    let mut tags = stmt.column_text(1)
+    let mut scope = stmt.column_text(2)
+    let source = stmt.column_text(3)
+    let status = stmt.column_text(4)
+    let contradiction = stmt.column_int(5)
+    let contradicts_raw = stmt.column_int(6)
     let contradicts_id = if contradicts_raw > 0 {
       Option.Some(contradicts_raw)
     } else {
@@ -790,9 +813,11 @@ fn get_existing_memory(
 
     Result.Ok(
       ExistingMemory(
+        content: content,
         tags: tags,
         scope: scope,
         source: source,
+        status: status,
         is_contradiction: contradiction,
         contradicts_id: contradicts_id,
       ),
@@ -828,6 +853,56 @@ fn update_memory_inner(
   let old_tags = if tags == '' { old.tags.to_string } else { tags }
   let old_scope = if scope == '' { old.scope.to_string } else { scope }
   let old_source = if source == '' { old.source.to_string } else { source }
+
+  # Metadata-only update: when no new content is supplied (including content
+  # that strips to empty), update the existing row in place rather than
+  # superseding it and inserting an empty-content version. This preserves the
+  # version chain and avoids a content_hash conflict with the old row.
+  if clean_content == '' {
+    let update_sql = "UPDATE memories SET tags = ?, scope = ?, source = ?, updated_at = datetime('now') WHERE id = ?"
+    let mut update_stmt = match db.prepare(update_sql) {
+      case Ok(s) -> s
+      case Error(e) -> return Result.Error('Failed to prepare: ${e}')
+    }
+
+    match bind_text_or_err(mut update_stmt, 1, old_tags) {
+      case Ok(_) -> {}
+      case Error(e) -> return Result.Error(e)
+    }
+
+    match bind_text_or_err(mut update_stmt, 2, old_scope) {
+      case Ok(_) -> {}
+      case Error(e) -> return Result.Error(e)
+    }
+
+    match bind_text_or_err(mut update_stmt, 3, old_source) {
+      case Ok(_) -> {}
+      case Error(e) -> return Result.Error(e)
+    }
+
+    match bind_int_or_err(mut update_stmt, 4, id) {
+      case Ok(_) -> {}
+      case Error(e) -> return Result.Error(e)
+    }
+
+    let update_result = update_stmt.step
+
+    update_stmt.finalize
+
+    if update_result != SQLITE_DONE {
+      return Result.Error('Metadata update failed')
+    }
+
+    return Result.Ok(id)
+  }
+
+  # Preserve a pinned memory's status across content updates; every other
+  # status is normalised back to active for the new version.
+  let new_status = if old.status == STATUS_PINNED {
+    STATUS_PINNED
+  } else {
+    STATUS_ACTIVE
+  }
 
   # Check for content_hash collision before superseding old memory
   let hash = sha256_hash(clean_content)
@@ -875,7 +950,7 @@ fn update_memory_inner(
   let band3 = simhash_substr(simhash_val, 4, 2)
   let band4 = simhash_substr(simhash_val, 6, 2)
 
-  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, parent_id, is_contradiction, contradicts_id, source) VALUES (?, ?, ?, ?, '${STATUS_ACTIVE}', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  let insert_sql = "INSERT INTO memories (content, content_hash, tags, scope, status, simhash, simhash_band1, simhash_band2, simhash_band3, simhash_band4, parent_id, is_contradiction, contradicts_id, source, storage_strength) VALUES (?, ?, ?, ?, '${new_status}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   let mut insert_stmt = match db.prepare(insert_sql) {
     case Ok(s) -> s
     case Error(e) -> return Result.Error('Failed to prepare: ${e}')
@@ -946,6 +1021,11 @@ fn update_memory_inner(
   }
 
   match bind_text_or_err(mut insert_stmt, 13, old_source) {
+    case Ok(_) -> {}
+    case Error(e) -> return Result.Error(e)
+  }
+
+  match bind_double_or_err(mut insert_stmt, 14, 5.0 as Float64) {
     case Ok(_) -> {}
     case Error(e) -> return Result.Error(e)
   }
