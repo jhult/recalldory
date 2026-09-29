@@ -1,5 +1,8 @@
 import recalldory.cli (DbCommand, parse_args, print_help)
-import recalldory.hooks (handle_hook_inject, handle_hook_register)
+import recalldory.db (Database)
+import recalldory.hooks (
+  handle_hook_inject, handle_hook_register, handle_hook_unregister,
+)
 import recalldory.init (handle_init)
 import recalldory.memory (
   output_contradictions, output_history, output_memories,
@@ -18,6 +21,7 @@ import recalldory.memstore_import (
   export_memories, generate_agents_md, import_memories,
 )
 import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
+import recalldory.report (fail)
 import recalldory.text (escape_json)
 import std.env
 import std.stdio (Stdout)
@@ -28,7 +32,7 @@ type async Main {
     let out = Stdout.new
 
     match parse_args {
-      case Some(parsed) -> {
+      case Ok(parsed) -> {
         let cmd = parsed.into_command
 
         match cmd {
@@ -36,12 +40,49 @@ type async Main {
           case Version -> print_version(out)
           case HookInject(titles) -> handle_hook_inject(titles, out)
           case HookRegister(titles) -> handle_hook_register(titles, out)
+          case HookUnregister -> handle_hook_unregister(out)
           case Init(no_gitignore) -> handle_init(no_gitignore, out)
           case Db(db_cmd) -> run_with_db(db_cmd, out)
         }
       }
-      case None -> print_help(out)
+      case Error(e) -> fail(e)
     }
+  }
+}
+
+# Run an operation against the project database, falling back to the global
+# database when it returns an error (e.g. the row only exists globally).
+fn project_then_global[T](
+  operation: fn (mut Database) -> Result[T, String],
+) -> Result[T, String] {
+  match open_project_database {
+    case Ok(db) -> {
+      let mut database = db
+      let result = operation.call(mut database)
+
+      database.close
+
+      match result {
+        case Ok(v) -> Result.Ok(v)
+        case Error(_) -> project_then_global_fallback(operation)
+      }
+    }
+    case Error(_) -> project_then_global_fallback(operation)
+  }
+}
+
+fn project_then_global_fallback[T](
+  operation: fn (mut Database) -> Result[T, String],
+) -> Result[T, String] {
+  match open_global_database {
+    case Ok(db) -> {
+      let mut database = db
+      let result = operation.call(mut database)
+
+      database.close
+      result
+    }
+    case Error(e) -> Result.Error(e)
   }
 }
 
@@ -79,12 +120,12 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
               json = json + '}'
               out.print(json)
             }
-            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+            case Error(e) -> fail(e)
           }
 
           database.close
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(e) -> fail(e)
       }
     }
     case Recall(query, scope, top) -> recall_both_dbs(query, scope, top, out)
@@ -92,147 +133,29 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
       list_both_dbs(scope, status, limit, older_than, out)
     }
     case Forget(id) -> {
-      match open_project_database {
-        case Ok(db) -> {
-          let mut database = db
-
-          match forget_memory(database, id) {
-            case Ok(deleted) -> {
-              database.close
-              out.print('{"success": ${deleted}}')
-            }
-            case Error(_) -> {
-              database.close
-
-              match open_global_database {
-                case Ok(global_db) -> {
-                  let mut gDB = global_db
-
-                  match forget_memory(gDB, id) {
-                    case Ok(deleted) -> {
-                      gDB.close
-                      out.print('{"success": ${deleted}}')
-                    }
-                    case Error(e) -> {
-                      gDB.close
-                      out.print('{"error": "${escape_json(e)}"}')
-                    }
-                  }
-                }
-                case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-              }
-            }
-          }
-        }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+      match project_then_global(fn (db) { forget_memory(db, id) }) {
+        case Ok(deleted) -> out.print('{"success": ${deleted}}')
+        case Error(e) -> fail(e)
       }
     }
     case Pin(id) -> {
-      match open_project_database {
-        case Ok(db) -> {
-          let mut database = db
-
-          match pin_memory(database, id) {
-            case Ok(pinned) -> {
-              database.close
-              out.print('{"success": ${pinned}}')
-            }
-            case Error(_) -> {
-              database.close
-
-              match open_global_database {
-                case Ok(global_db) -> {
-                  let mut gDB = global_db
-
-                  match pin_memory(gDB, id) {
-                    case Ok(pinned) -> {
-                      gDB.close
-                      out.print('{"success": ${pinned}}')
-                    }
-                    case Error(e) -> {
-                      gDB.close
-                      out.print('{"error": "${escape_json(e)}"}')
-                    }
-                  }
-                }
-                case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-              }
-            }
-          }
-        }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+      match project_then_global(fn (db) { pin_memory(db, id) }) {
+        case Ok(pinned) -> out.print('{"success": ${pinned}}')
+        case Error(e) -> fail(e)
       }
     }
     case Unpin(id) -> {
-      match open_project_database {
-        case Ok(db) -> {
-          let mut database = db
-
-          match unpin_memory(database, id) {
-            case Ok(unpinned) -> {
-              database.close
-              out.print('{"success": ${unpinned}}')
-            }
-            case Error(_) -> {
-              database.close
-
-              match open_global_database {
-                case Ok(global_db) -> {
-                  let mut gDB = global_db
-
-                  match unpin_memory(gDB, id) {
-                    case Ok(unpinned) -> {
-                      gDB.close
-                      out.print('{"success": ${unpinned}}')
-                    }
-                    case Error(e) -> {
-                      gDB.close
-                      out.print('{"error": "${escape_json(e)}"}')
-                    }
-                  }
-                }
-                case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-              }
-            }
-          }
-        }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+      match project_then_global(fn (db) { unpin_memory(db, id) }) {
+        case Ok(unpinned) -> out.print('{"success": ${unpinned}}')
+        case Error(e) -> fail(e)
       }
     }
     case Feedback(id, feedback_type) -> {
-      match open_project_database {
-        case Ok(db) -> {
-          let mut database = db
-
-          match feedback_memory(database, id, feedback_type) {
-            case Ok(updated) -> {
-              database.close
-              out.print('{"success": ${updated}}')
-            }
-            case Error(_) -> {
-              database.close
-
-              match open_global_database {
-                case Ok(global_db) -> {
-                  let mut gDB = global_db
-
-                  match feedback_memory(gDB, id, feedback_type) {
-                    case Ok(updated) -> {
-                      gDB.close
-                      out.print('{"success": ${updated}}')
-                    }
-                    case Error(e) -> {
-                      gDB.close
-                      out.print('{"error": "${escape_json(e)}"}')
-                    }
-                  }
-                }
-                case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-              }
-            }
-          }
-        }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+      match
+        project_then_global(fn (db) { feedback_memory(db, id, feedback_type) })
+      {
+        case Ok(updated) -> out.print('{"success": ${updated}}')
+        case Error(e) -> fail(e)
       }
     }
     case Maintain(dry_run) -> maintain_both_dbs(dry_run, out)
@@ -243,12 +166,12 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
 
           match export_memories(database) {
             case Ok(json) -> out.print(json)
-            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+            case Error(e) -> fail(e)
           }
 
           database.close
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(e) -> fail(e)
       }
     }
     case Import(file) -> {
@@ -258,7 +181,7 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
 
           match import_memories(database, file) {
             case Ok(result) -> {
-              let mut json = '{"success": true, "imported": ${result.imported}, "failed": ${result.failed}'
+              let mut json = '{"success": true, "imported": ${result.imported}, "failed": ${result.failed}, "deduplicated": ${result.deduplicated}'
 
               if result.first_error != '' {
                 json = json
@@ -268,12 +191,12 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
               json = json + '}'
               out.print(json)
             }
-            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+            case Error(e) -> fail(e)
           }
 
           database.close
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(e) -> fail(e)
       }
     }
     case AgentsMd(path) -> {
@@ -283,23 +206,22 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
 
           match generate_agents_md(database, path) {
             case Ok(_) -> out.print('{"success": true}')
-            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+            case Error(e) -> fail(e)
           }
 
           database.close
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(e) -> fail(e)
       }
     }
     case Stats -> stats_both_dbs(out)
     case Update(id, content, tags, scope, source) -> {
-      let db_result = if scope == 'global' {
-        open_global_database
-      } else {
-        open_project_database
-      }
+      # Documented behaviour: `update` searches the project database first and
+      # falls back to the global database. A supplied `scope` is only the new
+      # scope value to write, not a hint about which database to open.
+      let mut handled = false
 
-      match db_result {
+      match open_project_database {
         case Ok(db) -> {
           let mut database = db
 
@@ -315,20 +237,62 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
           {
             case Ok(new_id) -> {
               database.close
-              out.print(
+
+              let _ = out.print(
                 '{"success": true, "new_id": ${new_id}, "old_id": ${id}}',
               )
+
+              handled = true
             }
             case Error(e) -> {
               database.close
-              out.print('{"error": "${escape_json(e)}"}')
+
+              # A genuine error (e.g. content collision) is reported here;
+              # "not found" means we should try the global database instead.
+              if !e.contains?('not found') { fail(e) }
             }
           }
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(_) -> {}
+      }
+
+      if !handled {
+        match open_global_database {
+          case Ok(db) -> {
+            let mut database = db
+
+            match
+              update_memory_with_source(
+                database,
+                id,
+                content,
+                tags,
+                scope,
+                source,
+              )
+            {
+              case Ok(new_id) -> {
+                database.close
+                out.print(
+                  '{"success": true, "new_id": ${new_id}, "old_id": ${id}}',
+                )
+              }
+              case Error(e) -> {
+                database.close
+                fail(e)
+              }
+            }
+          }
+          case Error(e) -> fail(e)
+        }
       }
     }
-    case History(id) -> history_both_dbs(id, out)
+    case History(id) -> {
+      match project_then_global(fn (db) { get_history(db, id) }) {
+        case Ok(result) -> output_history(result, out)
+        case Error(e) -> fail(e)
+      }
+    }
     case Contradictions(resolve_id) -> {
       match open_project_database {
         case Ok(db) -> {
@@ -343,7 +307,7 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
                 }
                 case Error(e) -> {
                   database.close
-                  out.print('{"error": "${escape_json(e)}"}')
+                  fail(e)
                 }
               }
             }
@@ -355,13 +319,13 @@ fn run_with_db(cmd: DbCommand, out: Stdout) {
                 }
                 case Error(e) -> {
                   database.close
-                  out.print('{"error": "${escape_json(e)}"}')
+                  fail(e)
                 }
               }
             }
           }
         }
-        case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+        case Error(e) -> fail(e)
       }
     }
     case RebuildFts -> rebuild_fts_both_dbs(out)
@@ -410,11 +374,11 @@ fn recall_both_dbs(query: String, scope: String, top: Int, out: Stdout) {
                 }
                 case Error(ge) -> {
                   gDB.close
-                  out.print('{"error": "${escape_json(ge)}"}')
+                  fail(ge)
                 }
               }
             }
-            case Error(ge) -> out.print('{"error": "${escape_json(ge)}"}')
+            case Error(ge) -> fail(ge)
           }
         }
       }
@@ -431,11 +395,11 @@ fn recall_both_dbs(query: String, scope: String, top: Int, out: Stdout) {
             }
             case Error(ge) -> {
               gDB.close
-              out.print('{"error": "${escape_json(ge)}"}')
+              fail(ge)
             }
           }
         }
-        case Error(pe2) -> out.print('{"error": "${escape_json(pe2)}"}')
+        case Error(pe2) -> fail(pe2)
       }
     }
   }
@@ -489,11 +453,11 @@ fn list_both_dbs(
                 }
                 case Error(ge) -> {
                   gDB.close
-                  out.print('{"error": "${escape_json(ge)}"}')
+                  fail(ge)
                 }
               }
             }
-            case Error(ge) -> out.print('{"error": "${escape_json(ge)}"}')
+            case Error(ge) -> fail(ge)
           }
         }
       }
@@ -510,11 +474,11 @@ fn list_both_dbs(
             }
             case Error(ge) -> {
               gDB.close
-              out.print('{"error": "${escape_json(ge)}"}')
+              fail(ge)
             }
           }
         }
-        case Error(pe2) -> out.print('{"error": "${escape_json(pe2)}"}')
+        case Error(pe2) -> fail(pe2)
       }
     }
   }
@@ -557,11 +521,11 @@ fn maintain_both_dbs(dry_run: Bool, out: Stdout) {
         }
         case Error(e) -> {
           database.close
-          out.print('{"error": "${escape_json(e)}"}')
+          fail(e)
         }
       }
     }
-    case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+    case Error(e) -> fail(e)
   }
 }
 
@@ -580,7 +544,6 @@ fn stats_both_dbs(out: Stdout) {
           let mut pinned = stats.pinned
           let mut anti_pattern = stats.anti_pattern
           let mut total_strength = stats.total_strength
-          let mut count = stats.count
 
           match open_global_database {
             case Ok(global_db) -> {
@@ -594,7 +557,6 @@ fn stats_both_dbs(out: Stdout) {
                   pinned = pinned + gStats.pinned
                   anti_pattern = anti_pattern + gStats.anti_pattern
                   total_strength = total_strength + gStats.total_strength
-                  count = count + gStats.count
                 }
                 case Error(_) -> gDB.close
               }
@@ -602,8 +564,8 @@ fn stats_both_dbs(out: Stdout) {
             case Error(_) -> {}
           }
 
-          let avg = if count > 0 {
-            (total_strength as Float) / (count as Float)
+          let avg = if total > 0 {
+            total_strength / (total as Float)
           } else {
             0.0
           }
@@ -614,49 +576,11 @@ fn stats_both_dbs(out: Stdout) {
         }
         case Error(e) -> {
           database.close
-          out.print('{"error": "${escape_json(e)}"}')
+          fail(e)
         }
       }
     }
-    case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-  }
-}
-
-# Try history in project database, fall back to global.
-fn history_both_dbs(id: Int, out: Stdout) {
-  match open_project_database {
-    case Ok(db) -> {
-      let mut database = db
-
-      match get_history(database, id) {
-        case Ok(result) -> {
-          database.close
-          output_history(result, out)
-        }
-        case Error(_) -> {
-          database.close
-
-          match open_global_database {
-            case Ok(global_db) -> {
-              let mut gDB = global_db
-
-              match get_history(gDB, id) {
-                case Ok(result) -> {
-                  gDB.close
-                  output_history(result, out)
-                }
-                case Error(e) -> {
-                  gDB.close
-                  out.print('{"error": "${escape_json(e)}"}')
-                }
-              }
-            }
-            case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
-          }
-        }
-      }
-    }
-    case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+    case Error(e) -> fail(e)
   }
 }
 
@@ -690,11 +614,11 @@ fn rebuild_fts_both_dbs(out: Stdout) {
         }
         case Error(e) -> {
           database.close
-          out.print('{"error": "${escape_json(e)}"}')
+          fail(e)
         }
       }
     }
-    case Error(e) -> out.print('{"error": "${escape_json(e)}"}')
+    case Error(e) -> fail(e)
   }
 }
 

@@ -86,6 +86,8 @@ curl -fsSL -o ~/.claude/skills/recalldory/SKILL.md \
 recalldory hook register
 ```
 
+To remove the hook again (e.g. before uninstalling recalldory), run `recalldory hook unregister`. It only removes recalldory's own hook and leaves other hooks untouched.
+
 ### Project Initialization
 
 Initialize each project with recalldory to add `.recalldory/` to your project's `.gitignore`:
@@ -152,6 +154,7 @@ inko build --release \
 | Command | Description |
 |---------|-------------|
 | `hook register [--titles]` | Register post-compact hook into `$HOME/.claude/settings.json` (one-time setup). `--titles` registers preview-only injection |
+| `hook unregister` | Remove the recalldory hook from `$HOME/.claude/settings.json`, preserving other hooks (idempotent) |
 | `hook inject [--titles]` | Inject memories into context (called automatically by hook on compaction). `--titles` injects short previews; use `recall` for full text |
 
 ## Design Decisions

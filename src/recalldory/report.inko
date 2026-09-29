@@ -1,0 +1,18 @@
+import recalldory.text (escape_json)
+import std.stdio (Stderr, Stdout)
+import std.sys (exit)
+
+# Report a fatal error and terminate the process: a machine-readable error
+# object on stdout (which callers may parse), a human-readable diagnostic on
+# stderr, and a non-zero exit status so scripts and agents can detect failure.
+fn pub fail(message: String) -> Never {
+  let out = Stdout.new
+
+  let _ = out.print('{"error": "${escape_json(message)}"}')
+
+  let err = Stderr.new
+
+  let _ = err.print('recalldory: ${message}')
+
+  exit(1)
+}

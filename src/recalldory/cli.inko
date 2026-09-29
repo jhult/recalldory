@@ -149,6 +149,7 @@ type pub enum Command {
   case Help
   case Version
   case HookRegister(Bool)
+  case HookUnregister
   case HookInject(Bool)
   case Init(Bool)
   case Db(DbCommand)
@@ -166,41 +167,44 @@ impl ParsedArgs {
   }
 }
 
-# Parse CLI arguments into a ParsedArgs. Returns None if help should be shown.
-fn pub parse_args -> Option[ParsedArgs] {
-  let raw_args = env.arguments
-  let mut help = false
-  let mut version = false
-  let mut args: Array[String] = []
-  let mut i = 0
-
-  while i < raw_args.size {
-    match raw_args.get(i) {
-      case Ok(arg) -> {
-        if arg == '--help' or arg == '-h' {
-          help = true
-        } else if arg == '--version' {
-          version = true
-        } else {
-          args.push(arg.clone)
-        }
-      }
-      case Error(_) -> {}
-    }
-
-    i = i + 1
+# Describe an invalid or missing integer <id> argument, including the raw text.
+fn invalid_id_error(command: String, args: Array[String]) -> String {
+  let raw = match args.get(1) {
+    case Ok(a) -> a
+    case Error(_) -> '<missing>'
   }
 
-  if version { return Option.Some(ParsedArgs(command: Command.Version)) }
+  '${command}: invalid or missing <id> "${raw}"'
+}
 
-  if help or args.size < 1 {
-    return Option.Some(ParsedArgs(command: Command.Help))
+# Parse CLI arguments into a ParsedArgs. Returns Result.Error with a
+# human-readable message for invalid input; help/version resolve to
+# Ok(Command.Help) / Ok(Command.Version).
+fn pub parse_args -> Result[ParsedArgs, String] {
+  let args = env.arguments
+
+  if args.size < 1 { return Result.Ok(ParsedArgs(command: Command.Help)) }
+
+  let first = match args.get(0) {
+    case Ok(a) -> a
+    case Error(_) -> return Result.Ok(ParsedArgs(command: Command.Help))
+  }
+
+  # --help/--version are only honoured as the first argument, so that e.g.
+  # `recalldory add --version` stores the literal string instead of printing
+  # the version.
+  if first == '--help' or first == '-h' {
+    return Result.Ok(ParsedArgs(command: Command.Help))
+  }
+
+  if first == '--version' {
+    return Result.Ok(ParsedArgs(command: Command.Version))
   }
 
   let cmd = match args.get(0) {
     case Ok(cmd) -> {
       match cmd {
-        case 'help' -> Option.Some(Command.Help)
+        case 'help' -> Result.Ok(Command.Help)
         case 'add' -> parse_add(args)
         case 'recall' -> parse_recall(args)
         case 'list' -> parse_list(args)
@@ -210,33 +214,37 @@ fn pub parse_args -> Option[ParsedArgs] {
         case 'feedback' -> parse_feedback(args)
         case 'maintain' -> parse_maintain(args)
         case 'agents-md' -> parse_agents_md(args)
-        case 'stats' -> Option.Some(Command.Db(DbCommand.Stats))
-        case 'export' -> Option.Some(Command.Db(DbCommand.Export))
+        case 'stats' -> Result.Ok(Command.Db(DbCommand.Stats))
+        case 'export' -> Result.Ok(Command.Db(DbCommand.Export))
         case 'import' -> parse_import(args)
         case 'hook' -> parse_hook(args)
         case 'init' -> parse_init(args)
         case 'update' -> parse_update(args)
         case 'history' -> parse_history(args)
         case 'contradictions' -> parse_contradictions(args)
-        case 'rebuild-fts' -> Option.Some(Command.Db(DbCommand.RebuildFts))
-        case _ -> Option.None
+        case 'rebuild-fts' -> Result.Ok(Command.Db(DbCommand.RebuildFts))
+        case _ -> {
+          Result.Error(
+            'Unknown command "${cmd}". Run `recalldory --help` for usage.',
+          )
+        }
       }
     }
-    case Error(_) -> Option.None
+    case Error(_) -> Result.Error('Failed to read command-line arguments')
   }
 
   match cmd {
-    case Some(c) -> Option.Some(ParsedArgs(command: c))
-    case None -> Option.Some(ParsedArgs(command: Command.Help))
+    case Ok(c) -> Result.Ok(ParsedArgs(command: c))
+    case Error(e) -> Result.Error(e)
   }
 }
 
-fn pub parse_add(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
+fn pub parse_add(args: Array[String]) -> Result[Command, String] {
+  if args.size < 2 { return Result.Error('add: missing <content> argument') }
 
   let content = match args.get(1) {
     case Ok(c) -> c
-    case Error(_) -> return Option.None
+    case Error(_) -> return Result.Error('add: missing <content> argument')
   }
 
   let parser = FlagParser.new(args, 2)
@@ -245,21 +253,23 @@ fn pub parse_add(args: Array[String]) -> Option[Command] {
   let pin = parser.bool_flag('--pin')
   let source = parser.string_flag('--source')
 
-  if scope != '' and !validate_scope(scope) { return Option.None }
+  if scope != '' and !validate_scope(scope) {
+    return Result.Error(
+      'add: invalid --scope "${scope}" (expected project, global, or user)',
+    )
+  }
 
   let final_scope = if scope != '' { scope } else { 'project' }
 
-  Option.Some(
-    Command.Db(DbCommand.Add(content, tags, final_scope, pin, source)),
-  )
+  Result.Ok(Command.Db(DbCommand.Add(content, tags, final_scope, pin, source)))
 }
 
-fn pub parse_recall(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
+fn pub parse_recall(args: Array[String]) -> Result[Command, String] {
+  if args.size < 2 { return Result.Error('recall: missing <query> argument') }
 
   let query = match args.get(1) {
     case Ok(q) -> q
-    case Error(_) -> return Option.None
+    case Error(_) -> return Result.Error('recall: missing <query> argument')
   }
 
   let parser = FlagParser.new(args, 2)
@@ -267,26 +277,34 @@ fn pub parse_recall(args: Array[String]) -> Option[Command] {
 
   let top = match parser.int_flag('--top') {
     case Some(v) -> {
-      if v < 1 { return Option.None }
+      if v < 1 {
+        return Result.Error('recall: --top must be a positive integer')
+      }
 
       v
     }
     case None -> 10
   }
 
-  if scope != '' and !validate_scope(scope) { return Option.None }
+  if scope != '' and !validate_scope(scope) {
+    return Result.Error(
+      'recall: invalid --scope "${scope}" (expected project, global, or user)',
+    )
+  }
 
-  Option.Some(Command.Db(DbCommand.Recall(query, scope, top)))
+  Result.Ok(Command.Db(DbCommand.Recall(query, scope, top)))
 }
 
-fn pub parse_list(args: Array[String]) -> Option[Command] {
+fn pub parse_list(args: Array[String]) -> Result[Command, String] {
   let parser = FlagParser.new(args, 1)
   let scope = parser.string_flag('--scope')
   let status = parser.string_flag('--status')
 
   let limit = match parser.int_flag('--limit') {
     case Some(v) -> {
-      if v < 1 { return Option.None }
+      if v < 1 {
+        return Result.Error('list: --limit must be a positive integer')
+      }
 
       v
     }
@@ -295,106 +313,127 @@ fn pub parse_list(args: Array[String]) -> Option[Command] {
 
   let older_than = match parser.int_flag('--older-than') {
     case Some(v) -> {
-      if v < 1 { return Option.None }
+      if v < 1 {
+        return Result.Error('list: --older-than must be a positive integer')
+      }
 
       Option.Some(v)
     }
     case None -> Option.None
   }
 
-  if scope != '' and !validate_scope(scope) { return Option.None }
+  if scope != '' and !validate_scope(scope) {
+    return Result.Error(
+      'list: invalid --scope "${scope}" (expected project, global, or user)',
+    )
+  }
 
-  if status != '' and !validate_status(status) { return Option.None }
+  if status != '' and !validate_status(status) {
+    return Result.Error(
+      'list: invalid --status "${status}" (expected active, pinned, superseded, or anti-pattern)',
+    )
+  }
 
-  Option.Some(Command.Db(DbCommand.List(scope, status, limit, older_than)))
+  Result.Ok(Command.Db(DbCommand.List(scope, status, limit, older_than)))
 }
 
-fn pub parse_forget(args: Array[String]) -> Option[Command] {
+fn pub parse_forget(args: Array[String]) -> Result[Command, String] {
   match parse_int_arg(ref args, 1) {
-    case Some(id) -> Option.Some(Command.Db(DbCommand.Forget(id)))
-    case None -> Option.None
+    case Some(id) -> Result.Ok(Command.Db(DbCommand.Forget(id)))
+    case None -> Result.Error(invalid_id_error('forget', args))
   }
 }
 
-fn parse_pin(args: Array[String]) -> Option[Command] {
+fn pub parse_pin(args: Array[String]) -> Result[Command, String] {
   match parse_int_arg(ref args, 1) {
-    case Some(id) -> Option.Some(Command.Db(DbCommand.Pin(id)))
-    case None -> Option.None
+    case Some(id) -> Result.Ok(Command.Db(DbCommand.Pin(id)))
+    case None -> Result.Error(invalid_id_error('pin', args))
   }
 }
 
-fn parse_unpin(args: Array[String]) -> Option[Command] {
+fn pub parse_unpin(args: Array[String]) -> Result[Command, String] {
   match parse_int_arg(ref args, 1) {
-    case Some(id) -> Option.Some(Command.Db(DbCommand.Unpin(id)))
-    case None -> Option.None
+    case Some(id) -> Result.Ok(Command.Db(DbCommand.Unpin(id)))
+    case None -> Result.Error(invalid_id_error('unpin', args))
   }
 }
 
-fn pub parse_feedback(args: Array[String]) -> Option[Command] {
-  if args.size < 3 { return Option.None }
+fn pub parse_feedback(args: Array[String]) -> Result[Command, String] {
+  if args.size < 3 {
+    return Result.Error('feedback: expected <id> <helpful|harmful>')
+  }
 
   let id = match parse_int_arg(args, 1) {
     case Some(i) -> i
-    case None -> return Option.None
+    case None -> return Result.Error(invalid_id_error('feedback', args))
   }
 
   let feedback_type = match args.get(2) {
     case Ok(t) -> t
-    case Error(_) -> return Option.None
+    case Error(_) -> return Result.Error('feedback: missing <helpful|harmful>')
   }
 
   # Don't validate here - let feedback_memory return a proper error message
-  Option.Some(Command.Db(DbCommand.Feedback(id, feedback_type)))
+  Result.Ok(Command.Db(DbCommand.Feedback(id, feedback_type)))
 }
 
-fn pub parse_maintain(args: Array[String]) -> Option[Command] {
+fn pub parse_maintain(args: Array[String]) -> Result[Command, String] {
   let parser = FlagParser.new(args, 1)
   let dry_run = parser.bool_flag('--dry-run')
 
-  Option.Some(Command.Db(DbCommand.Maintain(dry_run)))
+  Result.Ok(Command.Db(DbCommand.Maintain(dry_run)))
 }
 
-fn parse_agents_md(args: Array[String]) -> Option[Command] {
+fn pub parse_agents_md(args: Array[String]) -> Result[Command, String] {
   let parser = FlagParser.new(args, 1)
   let path = parser.string_flag('--path')
 
   let final_path = if path != '' { path } else { '.' }
 
-  Option.Some(Command.Db(DbCommand.AgentsMd(final_path)))
+  Result.Ok(Command.Db(DbCommand.AgentsMd(final_path)))
 }
 
-fn parse_import(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
+fn pub parse_import(args: Array[String]) -> Result[Command, String] {
+  if args.size < 2 { return Result.Error('import: missing <file> argument') }
 
   match args.get(1) {
-    case Ok(file) -> Option.Some(Command.Db(DbCommand.Import(file)))
-    case Error(_) -> Option.None
+    case Ok(file) -> Result.Ok(Command.Db(DbCommand.Import(file)))
+    case Error(_) -> Result.Error('import: missing <file> argument')
   }
 }
 
-fn parse_hook(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
+fn pub parse_hook(args: Array[String]) -> Result[Command, String] {
+  if args.size < 2 {
+    return Result.Error('hook: expected `register` or `inject`')
+  }
 
   let sub = match args.get(1) {
     case Ok(s) -> s.to_string
-    case Error(_) -> return Option.None
+    case Error(_) -> {
+      return Result.Error('hook: expected `register` or `inject`')
+    }
   }
 
   let parser = FlagParser.new(args, 2)
   let titles = parser.bool_flag('--titles')
 
   match sub {
-    case 'inject' -> Option.Some(Command.HookInject(titles))
-    case 'register' -> Option.Some(Command.HookRegister(titles))
-    case _ -> Option.None
+    case 'inject' -> Result.Ok(Command.HookInject(titles))
+    case 'register' -> Result.Ok(Command.HookRegister(titles))
+    case 'unregister' -> Result.Ok(Command.HookUnregister)
+    case _ -> {
+      Result.Error(
+        'hook: unknown subcommand "${sub}" (expected register, unregister or inject)',
+      )
+    }
   }
 }
 
-fn parse_init(args: Array[String]) -> Option[Command] {
+fn pub parse_init(args: Array[String]) -> Result[Command, String] {
   let parser = FlagParser.new(args, 1)
   let no_gitignore = parser.bool_flag('--no-gitignore')
 
-  Option.Some(Command.Init(no_gitignore))
+  Result.Ok(Command.Init(no_gitignore))
 }
 
 fn pub int_parse(s: String) -> Option[Int] {
@@ -466,12 +505,12 @@ fn pub int_parse(s: String) -> Option[Int] {
   }
 }
 
-fn pub parse_update(args: Array[String]) -> Option[Command] {
-  if args.size < 2 { return Option.None }
+fn pub parse_update(args: Array[String]) -> Result[Command, String] {
+  if args.size < 2 { return Result.Error('update: missing <id> argument') }
 
   let id = match parse_int_arg(args, 1) {
     case Some(i) -> i
-    case None -> return Option.None
+    case None -> return Result.Error(invalid_id_error('update', args))
   }
 
   let parser = FlagParser.new(args, 2)
@@ -483,26 +522,32 @@ fn pub parse_update(args: Array[String]) -> Option[Command] {
   let content = if flag_content != '' { flag_content } else { positional }
 
   if content == '' and tags == '' and scope == '' and source == '' {
-    return Option.None
+    return Result.Error(
+      'update: nothing to update (provide content, --tags, --scope or --source)',
+    )
   }
 
-  if scope != '' and !validate_scope(scope) { return Option.None }
+  if scope != '' and !validate_scope(scope) {
+    return Result.Error(
+      'update: invalid --scope "${scope}" (expected project, global, or user)',
+    )
+  }
 
-  Option.Some(Command.Db(DbCommand.Update(id, content, tags, scope, source)))
+  Result.Ok(Command.Db(DbCommand.Update(id, content, tags, scope, source)))
 }
 
-fn parse_history(args: Array[String]) -> Option[Command] {
+fn pub parse_history(args: Array[String]) -> Result[Command, String] {
   match parse_int_arg(ref args, 1) {
-    case Some(id) -> Option.Some(Command.Db(DbCommand.History(id)))
-    case None -> Option.None
+    case Some(id) -> Result.Ok(Command.Db(DbCommand.History(id)))
+    case None -> Result.Error(invalid_id_error('history', args))
   }
 }
 
-fn parse_contradictions(args: Array[String]) -> Option[Command] {
+fn pub parse_contradictions(args: Array[String]) -> Result[Command, String] {
   let parser = FlagParser.new(args, 1)
   let resolve_id = parser.int_flag('--resolve')
 
-  Option.Some(Command.Db(DbCommand.Contradictions(resolve_id)))
+  Result.Ok(Command.Db(DbCommand.Contradictions(resolve_id)))
 }
 
 fn pub print_help(out: Stdout) {
@@ -568,6 +613,9 @@ fn pub print_help(out: Stdout) {
   )
   let _ = out.print(
     '  hook register [--titles]                        Register memory injection hook in ~/.claude/settings.json',
+  )
+  let _ = out.print(
+    '  hook unregister                                 Remove the memory injection hook from ~/.claude/settings.json',
   )
   let _ = out.print(
     '  hook inject [--titles]                           Inject memories into context (auto-called on compaction)',

@@ -1,8 +1,9 @@
-import recalldory.db (to_cstr)
+import recalldory.db (Database, to_cstr)
 import recalldory.memstore (
   home_directory, open_global_database, open_project_database,
 )
 import recalldory.memstore_crud (list_memories)
+import recalldory.report (fail)
 import recalldory.text (ellipsize, escape_json, strip_invisible_unicode)
 import std.bytes (ByteArray)
 import std.env
@@ -10,6 +11,7 @@ import std.fs.file (ReadOnlyFile, WriteOnlyFile)
 import std.io (Buffer)
 import std.json (Json)
 import std.map (Map)
+import std.rand (Random)
 import std.stdio (Stdout)
 
 fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
@@ -70,38 +72,45 @@ fn pub handle_hook_inject(titles_only: Bool, out: Stdout) {
   }
 }
 
+# Render a memory section from an already-open database, or '' when there is
+# nothing to inject.
+fn memory_section_from_db(
+  db: mut Database,
+  header: String,
+  titles_only: Bool,
+) -> String {
+  match list_memories(db, '', '', 10, Option.None) {
+    case Ok(mems) -> {
+      if mems.size > 0 {
+        let mut section = header
+
+        for mem in mems.iter {
+          section = section
+            + '- ['
+            + escape_json(mem.status)
+            + '] <memory>'
+            + hook_memory_text(mem.content, titles_only)
+            + '</memory>\\n'
+        }
+
+        section
+      } else {
+        ''
+      }
+    }
+    case Error(_) -> ''
+  }
+}
+
 fn query_memories_for_hook_project(header: String, titles_only: Bool) -> String
 {
   match open_project_database {
     case Ok(db) -> {
       let mut database = db
+      let section = memory_section_from_db(mut database, header, titles_only)
 
-      match list_memories(database, '', '', 10, Option.None) {
-        case Ok(mems) -> {
-          database.close
-
-          if mems.size > 0 {
-            let mut section = header
-
-            for mem in mems.iter {
-              section = section
-                + '- ['
-                + escape_json(mem.status)
-                + '] <memory>'
-                + hook_memory_text(mem.content, titles_only)
-                + '</memory>\\n'
-            }
-
-            section
-          } else {
-            ''
-          }
-        }
-        case Error(_) -> {
-          database.close
-          ''
-        }
-      }
+      database.close
+      section
     }
     case Error(_) -> ''
   }
@@ -111,45 +120,122 @@ fn query_memories_for_hook_global(header: String, titles_only: Bool) -> String {
   match open_global_database {
     case Ok(db) -> {
       let mut database = db
+      let section = memory_section_from_db(mut database, header, titles_only)
 
-      match list_memories(database, '', '', 10, Option.None) {
-        case Ok(mems) -> {
-          database.close
-
-          if mems.size > 0 {
-            let mut section = header
-
-            for mem in mems.iter {
-              section = section
-                + '- ['
-                + escape_json(mem.status)
-                + '] <memory>'
-                + hook_memory_text(mem.content, titles_only)
-                + '</memory>\\n'
-            }
-
-            section
-          } else {
-            ''
-          }
-        }
-        case Error(_) -> {
-          database.close
-          ''
-        }
-      }
+      database.close
+      section
     }
     case Error(_) -> ''
   }
 }
 
-# Build the `hooks` array for a Claude Code hook entry.
-fn make_hooks(command: String) -> Json {
+# Quote a path for safe embedding in a shell command using POSIX single quotes.
+# Embedded single quotes are emitted as '\'' so the value cannot break out.
+fn shell_quote(value: String) -> String {
+  let mut out = ByteArray.new
+
+  # Opening quote
+  out.push(39)
+
+  let bytes = value.to_byte_array
+  let mut i = 0
+
+  while i < bytes.size {
+    match bytes.get(i) {
+      case Ok(b) -> {
+        if b == 39 {
+          # close quote, backslash, escaped quote, reopen quote
+          out.push(39)
+          out.push(92)
+          out.push(39)
+          out.push(39)
+        } else {
+          out.push(b)
+        }
+      }
+      case Error(_) -> {}
+    }
+
+    i = i + 1
+  }
+
+  # Closing quote
+  out.push(39)
+
+  out.into_string
+}
+
+# A single Claude Code hook action object.
+fn make_hook(command: String) -> Json {
   let mut inner: Map[String, Json] = Map.new
 
   inner.set('type', Json.String('command'))
   inner.set('command', Json.String(command))
-  Json.Array([Json.Object(inner)])
+  Json.Object(inner)
+}
+
+# Build the `hooks` array for a Claude Code hook entry.
+fn make_hooks(command: String) -> Json {
+  Json.Array([make_hook(command)])
+}
+
+# Is this hook action one previously installed by recalldory?
+fn is_recalldory_hook(value: ref Json) -> Bool {
+  match value {
+    case Object(m) -> {
+      match m.get('command') {
+        case Ok(cmd) -> {
+          match cmd {
+            case String(s) -> s.contains?(' hook inject')
+            case _ -> false
+          }
+        }
+        case Error(_) -> false
+      }
+    }
+    case _ -> false
+  }
+}
+
+# Merge a recalldory inject hook into an existing hooks value without dropping
+# hooks installed by the user or other tools. Our own previous entry is left in
+# place (de-duplication by command match) rather than replaced wholesale.
+fn merge_compact_hooks(entry_map: mut Map[String, Json], command: String) {
+  let mut has_array = false
+  let mut present = false
+
+  match entry_map.get('hooks') {
+    case Ok(v) -> {
+      match v {
+        case Array(a) -> {
+          has_array = true
+
+          for h in a.iter {
+            if is_recalldory_hook(h) { present = true }
+          }
+        }
+        case _ -> {}
+      }
+    }
+    case Error(_) -> {}
+  }
+
+  # Already installed: leave the array untouched.
+  if present { return }
+
+  if has_array {
+    match entry_map.get_mut('hooks') {
+      case Ok(hm) -> {
+        match mut hm {
+          case Array(a_mut) -> a_mut.push(make_hook(command))
+          case _ -> {}
+        }
+      }
+      case Error(_) -> {}
+    }
+  } else {
+    entry_map.set('hooks', make_hooks(command))
+  }
 }
 
 # Build a Claude Code SessionStart hook entry for the given command.
@@ -161,29 +247,93 @@ fn make_hook_entry(command: String) -> Json {
   Json.Object(matcher)
 }
 
-# Register the memory injection hook into ~/.claude/settings.json. Uses atomic rename
-# to avoid corrupting the settings file.
+# Write settings atomically: write to a randomly suffixed temp file, then
+# rename over the destination. A unique temp name prevents concurrent writers
+# from racing on a shared fixed path and renaming a partially written file.
+fn write_settings_atomic(
+  settings_path: String,
+  output: String,
+) -> Result[Nil, String] {
+  let mut rng = Random.new
+  let tmp_path = '${settings_path}.tmp.${rng.int}'
+
+  match WriteOnlyFile.new(tmp_path.to_path) {
+    case Ok(f) -> {
+      let mut file = f
+
+      match file.write(output.to_byte_array) {
+        case Ok(_) -> {
+          let _ = file.flush
+
+          let src = to_cstr(tmp_path)
+          let dst = to_cstr(settings_path)
+
+          if (rename(src.pointer, dst.pointer) as Int) == 0 {
+            Result.Ok(nil)
+          } else {
+            let tmp_cstr = to_cstr(tmp_path)
+            let _ = unlink(tmp_cstr.pointer)
+
+            Result.Error('Failed to rename temp file to settings')
+          }
+        }
+        case Error(e) -> {
+          let tmp_cstr = to_cstr(tmp_path)
+          let _ = unlink(tmp_cstr.pointer)
+
+          Result.Error('Failed to write settings: ${e}')
+        }
+      }
+    }
+    case Error(e) -> Result.Error('Failed to open temp file for writing: ${e}')
+  }
+}
+
+# Is this SessionStart entry a compact entry whose hooks array is now empty
+# (i.e. it existed only to hold the recalldory hook)?
+fn entry_is_empty_recalldory(value: ref Json) -> Bool {
+  match value {
+    case Object(m) -> {
+      match m.get('matcher') {
+        case Ok(mv) -> {
+          match mv {
+            case String(s) if s == 'compact' -> {
+              match m.get('hooks') {
+                case Ok(hv) -> {
+                  match hv {
+                    case Array(a) -> a.size == 0
+                    case _ -> false
+                  }
+                }
+                case Error(_) -> false
+              }
+            }
+            case _ -> false
+          }
+        }
+        case Error(_) -> false
+      }
+    }
+    case _ -> false
+  }
+}
+
+# Register the memory injection hook into ~/.claude/settings.json. Uses atomic
+# rename to avoid corrupting the settings file.
 fn pub handle_hook_register(titles_only: Bool, out: Stdout) {
   # Resolve path to this executable for the hook command
   let exe_path = match env.executable {
     case Ok(p) -> p.to_string
-    case Error(_) -> {
-      let _ = out.print(
-        '{"error": "Cannot determine recalldory executable path"}',
-      )
-
-      return
-    }
+    case Error(_) -> fail('Cannot determine recalldory executable path')
   }
 
   let home = match home_directory {
     case Ok(h) -> h
-    case Error(e) -> {
-      let _ = out.print('{"error": "${escape_json(e)}"}')
-
-      return
-    }
+    case Error(e) -> fail(e)
   }
+
+  # Ensure the settings directory exists (Claude Code normally creates it).
+  let _ = '${home}/.claude'.to_path.create_directory_all
 
   let settings_path = '${home}/.claude/settings.json'
   let settings_file = settings_path.to_path
@@ -196,13 +346,7 @@ fn pub handle_hook_register(titles_only: Bool, out: Stdout) {
 
       match file.read_all(bytes) {
         case Ok(_) -> {}
-        case Error(_) -> {
-          let _ = out.print(
-            '{"error": "Failed to read existing settings.json"}',
-          )
-
-          return
-        }
+        case Error(_) -> fail('Failed to read existing settings.json')
       }
 
       let content = bytes.into_string
@@ -211,22 +355,21 @@ fn pub handle_hook_register(titles_only: Bool, out: Stdout) {
       match Json.parse(buffer) {
         case Ok(json) -> json
         case Error(_) -> {
-          let _ = out.print(
-            '{"error": "Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry."}',
+          fail(
+            'Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry.',
           )
-
-          return
         }
       }
     }
     case Error(_) -> Json.Object(Map.new)
   }
 
-  # Build the hook entry
+  # Build the hook entry, quoting the executable path so spaces/metacharacters
+  # in the install location cannot break or inject into the shell command.
   let command = if titles_only {
-    '${exe_path} hook inject --titles'
+    '${shell_quote(exe_path)} hook inject --titles'
   } else {
-    '${exe_path} hook inject'
+    '${shell_quote(exe_path)} hook inject'
   }
 
   let recalldory_entry = make_hook_entry(command)
@@ -265,9 +408,9 @@ fn pub handle_hook_register(titles_only: Bool, out: Stdout) {
                                   case Ok(m) -> {
                                     match m {
                                       case String(s) if s == 'compact' -> {
-                                        entry_map.set(
-                                          'hooks',
-                                          make_hooks(command),
+                                        merge_compact_hooks(
+                                          mut entry_map,
+                                          command,
                                         )
                                         updated = true
                                       }
@@ -307,57 +450,133 @@ fn pub handle_hook_register(titles_only: Bool, out: Stdout) {
         case Error(_) -> {}
       }
     }
-    case _ -> {
-      let _ = out.print('{"error": "settings.json root is not an object"}')
+    case _ -> fail('settings.json root is not an object')
+  }
+
+  match write_settings_atomic(settings_path, root.to_pretty_string + '\n') {
+    case Ok(_) -> {
+      let _ = out.print(
+        '{"success": true, "message": "Hook installed to ${escape_json(settings_path)}"}',
+      )
+    }
+    case Error(e) -> fail(e)
+  }
+}
+
+# Remove the recalldory inject hook from ~/.claude/settings.json while
+# preserving hooks installed by the user or other tools. Idempotent: removing
+# when no hook is present succeeds with removed: 0.
+fn pub handle_hook_unregister(out: Stdout) {
+  let home = match home_directory {
+    case Ok(h) -> h
+    case Error(e) -> fail(e)
+  }
+
+  let settings_path = '${home}/.claude/settings.json'
+  let settings_file = settings_path.to_path
+
+  let mut root = match ReadOnlyFile.new(settings_file) {
+    case Ok(f) -> {
+      let mut file = f
+      let mut bytes = ByteArray.new
+
+      match file.read_all(bytes) {
+        case Ok(_) -> {}
+        case Error(_) -> fail('Failed to read existing settings.json')
+      }
+
+      let buffer = Buffer.new(bytes.into_string)
+
+      match Json.parse(buffer) {
+        case Ok(json) -> json
+        case Error(_) -> {
+          fail(
+            'Failed to parse existing settings.json: file may be corrupted. Fix it manually or remove it and retry.',
+          )
+        }
+      }
+    }
+    case Error(_) -> {
+      # No settings file: nothing to remove.
+      let _ = out.print('{"success": true, "removed": 0}')
 
       return
     }
   }
 
-  # Write atomically: write to temp file then rename
-  let output = root.to_pretty_string + '\n'
-  let tmp_path = '${settings_path}.tmp'
-  let tmp_file = tmp_path.to_path
+  let mut removed = 0
 
-  match WriteOnlyFile.new(tmp_file) {
-    case Ok(f) -> {
-      let mut file = f
+  match mut root {
+    case Object(root_map) -> {
+      match root_map.get_mut('hooks') {
+        case Ok(hooks_json) -> {
+          match mut hooks_json {
+            case Object(hooks_map) -> {
+              match hooks_map.get_mut('SessionStart') {
+                case Ok(ss_json) -> {
+                  match mut ss_json {
+                    case Array(entries) -> {
+                      # Strip our hook action from every entry's hooks array.
+                      let mut i = 0
 
-      match file.write(output.to_byte_array) {
-        case Ok(_) -> {
-          let _ = file.flush
-          let src = to_cstr(tmp_path)
-          let dst = to_cstr(settings_path)
-          let rename_result = rename(src.pointer, dst.pointer)
+                      while i < entries.size {
+                        match entries.get_mut(i) {
+                          case Ok(entry) -> {
+                            match mut entry {
+                              case Object(entry_map) -> {
+                                match entry_map.get_mut('hooks') {
+                                  case Ok(entry_hooks_json) -> {
+                                    match mut entry_hooks_json {
+                                      case Array(actions) -> {
+                                        let before = actions.size
 
-          if (rename_result as Int) == 0 {
-            let _ = out.print(
-              '{"success": true, "message": "Hook installed to ${escape_json(settings_path)}"}',
-            )
-          } else {
-            let tmp_cstr = to_cstr(tmp_path)
-            let _ = unlink(tmp_cstr.pointer)
+                                        actions.remove_if(fn (a) {
+                                          is_recalldory_hook(a)
+                                        })
+                                        removed = removed
+                                          + (before - actions.size)
+                                      }
+                                      case _ -> {}
+                                    }
+                                  }
+                                  case Error(_) -> {}
+                                }
+                              }
+                              case _ -> {}
+                            }
+                          }
+                          case Error(_) -> {}
+                        }
 
-            let _ = out.print(
-              '{"error": "Failed to rename temp file to settings"}',
-            )
+                        i = i + 1
+                      }
+
+                      # Drop compact entries left with no hooks at all.
+                      entries.remove_if(fn (e) { entry_is_empty_recalldory(e) })
+                    }
+                    case _ -> {}
+                  }
+                }
+                case Error(_) -> {}
+              }
+            }
+            case _ -> {}
           }
         }
-        case Error(e) -> {
-          let err_msg = '${e}'
-
-          let _ = out.print(
-            '{"error": "Failed to write settings: ${escape_json(err_msg)}"}',
-          )
-        }
+        case Error(_) -> {}
       }
     }
-    case Error(e) -> {
-      let err_msg = '${e}'
+    case _ -> fail('settings.json root is not an object')
+  }
 
-      let _ = out.print(
-        '{"error": "Failed to open temp file for writing: ${escape_json(err_msg)}"}',
-      )
+  if removed > 0 {
+    match write_settings_atomic(settings_path, root.to_pretty_string + '\n') {
+      case Ok(_) -> {
+        let _ = out.print('{"success": true, "removed": ${removed}}')
+      }
+      case Error(e) -> fail(e)
     }
+  } else {
+    let _ = out.print('{"success": true, "removed": 0}')
   }
 }
