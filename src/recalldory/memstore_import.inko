@@ -2,8 +2,8 @@ import recalldory.db (Database, SQLITE_DONE, SQLITE_ROW, to_cstr)
 import recalldory.memory (ImportResult)
 import recalldory.memstore_crud (add_memory_inner)
 import recalldory.memstore_helpers (
-  MEMORY_COLUMNS, STATUS_ANTI_PATTERN, STATUS_PINNED, exec_sql, exec_with_int,
-  rollback_or_error,
+  MEMORY_COLUMNS, STATUS_ACTIVE, STATUS_ANTI_PATTERN, STATUS_PINNED,
+  STATUS_SUPERSEDED, exec_sql, exec_with_int, rollback_or_error,
 )
 import std.bytes (ByteArray)
 import std.env
@@ -17,12 +17,71 @@ fn extern rename(old_path: Pointer[Uint8], new_path: Pointer[Uint8]) -> Int32
 
 fn extern unlink(path: Pointer[Uint8]) -> Int32
 
+# Is `path` equal to `dir` or nested beneath it? Prevents a TMPDIR prefix such
+# as `/tmp` from matching an unrelated sibling like `/tmpfoo`.
+fn path_is_within(dir: String, path: String) -> Bool {
+  if dir.size == 0 { return false }
+
+  let base = if dir.ends_with?('/') {
+    dir.substring(0, dir.size - 1)
+  } else {
+    dir
+  }
+
+  if base.size == 0 { return false }
+
+  if path == base { return true }
+
+  path.starts_with?('${base}/')
+}
+
+# Does this path contain a ".." path *component*? Matches a whole component only,
+# so filenames such as `notes..json` are allowed.
+fn has_parent_component(path: String) -> Bool {
+  let bytes = path.to_byte_array
+  let size = bytes.size
+  let mut start = 0
+  let mut i = 0
+
+  while i <= size {
+    let is_sep = if i == size {
+      true
+    } else {
+      match bytes.get(i) {
+        case Ok(b) -> b == 47
+        case Error(_) -> false
+      }
+    }
+
+    if is_sep {
+      if i - start == 2 {
+        let a = match bytes.get(start) {
+          case Ok(b) -> b
+          case Error(_) -> 0
+        }
+        let b = match bytes.get(start + 1) {
+          case Ok(b) -> b
+          case Error(_) -> 0
+        }
+
+        if a == 46 and b == 46 { return true }
+      }
+
+      start = i + 1
+    }
+
+    i = i + 1
+  }
+
+  false
+}
+
 # Check if a path is under a temp directory (TMPDIR, /tmp, or /var/folders)
 fn is_temp_path(path: String) -> Bool {
   # Check TMPDIR environment variable (most portable)
   match env.get('TMPDIR') {
     case Ok(tmpdir) -> {
-      if tmpdir.size > 0 and path.starts_with?(tmpdir) { return true }
+      if tmpdir.size > 0 and path_is_within(tmpdir, path) { return true }
     }
     case Error(_) -> {}
   }
@@ -38,6 +97,14 @@ fn is_temp_path(path: String) -> Bool {
   }
 
   false
+}
+
+# Is this one of the statuses stored in the memories table?
+fn is_known_status(s: String) -> Bool {
+  s == STATUS_ACTIVE
+    or s == STATUS_PINNED
+    or s == STATUS_SUPERSEDED
+    or s == STATUS_ANTI_PATTERN
 }
 
 # Check if a path is absolute (starts with /)
@@ -58,7 +125,9 @@ fn is_absolute_path(path: String) -> Bool {
 # a symlink within an allowed directory points outside it.
 fn validate_path(path: String, allow_tmp: Bool) -> Result[Path, String] {
   # Check for path traversal in the original path (fast-fail)
-  if path.contains?('..') { return Result.Error('Path must not contain ".."') }
+  if has_parent_component(path) {
+    return Result.Error('Path must not contain ".."')
+  }
 
   # Track whether the original path was absolute for symlink check later
   let original_is_absolute = is_absolute_path(path)
@@ -215,7 +284,12 @@ fn pub generate_agents_md(db: mut Database, path: String) -> Result[Nil, String]
             Result.Error('Failed to rename temp file to AGENTS.md')
           }
         }
-        case Error(e) -> Result.Error('Failed to write AGENTS.md: ${e}')
+        case Error(e) -> {
+          let tmp_cstr = to_cstr(tmp_path)
+          let _ = unlink(tmp_cstr.pointer)
+
+          Result.Error('Failed to write AGENTS.md: ${e}')
+        }
       }
     }
     case Error(e) -> Result.Error('Failed to open AGENTS.md for writing: ${e}')
@@ -372,7 +446,9 @@ fn import_memories_inner(
 ) -> Result[ImportResult, String] {
   let mut count = 0
   let mut failed = 0
+  let mut dedup_count = 0
   let mut first_error = ''
+  let mut index = 0
 
   # Build ID mapping: old_id -> new_id for rewriting relational fields
   let mut id_map: Map[Int, Int] = Map.new
@@ -382,6 +458,8 @@ fn import_memories_inner(
 
   # First pass: Insert all memories and build ID mapping
   for mem in memories.iter {
+    index = index + 1
+
     let content_q = mem.query.key('content')
     let mem_content = match content_q.as_string {
       case Some(s) -> s
@@ -468,6 +546,17 @@ fn import_memories_inner(
             case None -> {}
           }
 
+          let mut has_strength = false
+
+          match mem.query.key('strength').as_float {
+            case Some(v) -> {
+              set_clauses.push('strength = ?')
+              float_vals.push(v)
+              has_strength = true
+            }
+            case None -> {}
+          }
+
           match mem.query.key('helpful_count').as_int {
             case Some(v) -> {
               set_clauses.push('helpful_count = ?')
@@ -496,6 +585,46 @@ fn import_memories_inner(
             case Some(v) -> {
               set_clauses.push('is_contradiction = ?')
               int_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('is_negative').as_int {
+            case Some(v) -> {
+              set_clauses.push('is_negative = ?')
+              int_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          # Restore the real status (superseded / anti-pattern rows would
+          # otherwise be re-inserted as active) and the original timestamps so
+          # an export can be faithfully restored.
+          if is_known_status(status) {
+            set_clauses.push('status = ?')
+            text_vals.push(status)
+          }
+
+          match mem.query.key('created_at').as_string {
+            case Some(v) -> {
+              set_clauses.push('created_at = ?')
+              text_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('updated_at').as_string {
+            case Some(v) -> {
+              set_clauses.push('updated_at = ?')
+              text_vals.push(v)
+            }
+            case None -> {}
+          }
+
+          match mem.query.key('last_accessed').as_string {
+            case Some(v) -> {
+              set_clauses.push('last_accessed = ?')
+              text_vals.push(v)
             }
             case None -> {}
           }
@@ -583,28 +712,45 @@ fn import_memories_inner(
             }
           }
 
-          match
-            exec_with_int(
-              db,
-              'UPDATE memories SET strength = 0.7 * retrieval_strength + 0.3 * (storage_strength / 10.0) WHERE id = ?',
-              new_id,
-            )
-          {
-            case Ok(_) -> {}
-            case Error(e) -> {
-              failed = failed + 1
+          # Only derive strength when the backup did not carry an explicit
+          # value; otherwise the restored strength is authoritative.
+          if !has_strength {
+            match
+              exec_with_int(
+                db,
+                'UPDATE memories SET strength = 0.7 * retrieval_strength + 0.3 * (storage_strength / 10.0) WHERE id = ?',
+                new_id,
+              )
+            {
+              case Ok(_) -> {}
+              case Error(e) -> {
+                failed = failed + 1
 
-              if first_error == '' { first_error = e }
+                if first_error == '' { first_error = e }
+              }
             }
           }
 
-          count = count + 1
+          # A deduplicated add matched existing content; it is not a new import.
+          if result.deduplicated {
+            dedup_count = dedup_count + 1
+          } else {
+            count = count + 1
+          }
         }
         case Error(e) -> {
           failed = failed + 1
 
           if first_error == '' { first_error = e }
         }
+      }
+    } else {
+      # A record without usable content cannot be stored; surface it instead of
+      # silently dropping it.
+      failed = failed + 1
+
+      if first_error == '' {
+        first_error = 'Entry ${index} is missing required "content" field'
       }
     }
   }
@@ -705,7 +851,12 @@ fn import_memories_inner(
   }
 
   Result.Ok(
-    ImportResult(imported: count, failed: failed, first_error: first_error),
+    ImportResult(
+      imported: count,
+      failed: failed,
+      deduplicated: dedup_count,
+      first_error: first_error,
+    ),
   )
 }
 
