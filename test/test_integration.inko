@@ -9,17 +9,29 @@ import recalldory.memstore_crud (
 )
 import recalldory.memstore_import (export_memories, import_memories)
 import recalldory.memstore_maintain (get_stats, maintain_memory, rebuild_fts)
+import std.env
 import std.fs.file (WriteOnlyFile)
 import std.test (Tests)
 
 fn extern remove(path: Pointer[Uint8]) -> Int32
 
+# Directory for test databases and artifacts. Kept out of the repository (and
+# out of the developer's HOME) so repeated runs don't accumulate files.
+fn test_tmp_dir -> String {
+  let base = match env.get('TMPDIR') {
+    case Ok(d) -> if d.size > 0 { d } else { '/tmp' }
+    case Error(_) -> '/tmp'
+  }
+
+  let dir = '${base}/recalldory-integration-tests'
+
+  let _ = dir.to_path.create_directory_all
+
+  dir
+}
+
 fn test_db(name: String) -> Database {
-  let dir = '.recalldory'.to_path
-
-  let _ = dir.create_directory
-
-  let path = '.recalldory/${name}.db'
+  let path = '${test_tmp_dir}/${name}.db'
 
   let _ = remove(to_cstr(path).pointer)
   let _ = remove(to_cstr(path + '-wal').pointer)
@@ -625,7 +637,8 @@ fn pub tests(t: mut Tests) {
 
     let mut db2 = test_db('export_import_target')
 
-    let tmp = '.recalldory/test_export.json'.to_path
+    let export_path = '${test_tmp_dir}/test_export.json'
+    let tmp = export_path.to_path
 
     match WriteOnlyFile.new(tmp) {
       case Ok(f) -> {
@@ -636,7 +649,7 @@ fn pub tests(t: mut Tests) {
       case Error(e) -> panic('write export failed: ${e}')
     }
 
-    match import_memories(db2, '.recalldory/test_export.json') {
+    match import_memories(db2, export_path) {
       case Ok(result) -> {
         t.equal(result.imported, 1)
         t.equal(result.failed, 0)
@@ -661,6 +674,150 @@ fn pub tests(t: mut Tests) {
 
     db2.close
   })
+
+  # --- import robustness / fidelity ---
+
+  t.test('export and import preserves status and timestamps', fn (t) {
+    let mut db = test_db('export_fidelity')
+    let _ = add_memory(db, 'first version', 'a', 'project', false)
+
+    match update_memory(db, 1, 'second version', 'a', 'project') {
+      case Ok(_) -> {}
+      case Error(e) -> panic('update failed: ${e}')
+    }
+
+    match pin_memory(db, 2) {
+      case Ok(_) -> {}
+      case Error(e) -> panic('pin failed: ${e}')
+    }
+
+    let json = match export_memories(db) {
+      case Ok(j) -> j
+      case Error(e) -> panic('export failed: ${e}')
+    }
+
+    db.close
+
+    let mut db2 = test_db('export_fidelity_target')
+    let export_path = '${test_tmp_dir}/fidelity_export.json'
+
+    match WriteOnlyFile.new(export_path.to_path) {
+      case Ok(f) -> {
+        let mut file = f
+        let _ = file.write(json.to_byte_array)
+        let _ = file.flush
+      }
+      case Error(e) -> panic('write export failed: ${e}')
+    }
+
+    match import_memories(db2, export_path) {
+      case Ok(result) -> t.equal(result.imported, 2)
+      case Error(e) -> panic('import failed: ${e}')
+    }
+
+    match list_memories(db2, '', 'superseded', 50, Option.None) {
+      case Ok(mems) -> t.equal(mems.size, 1)
+      case Error(e) -> panic('list superseded failed: ${e}')
+    }
+
+    match list_memories(db2, '', 'pinned', 50, Option.None) {
+      case Ok(mems) -> t.equal(mems.size, 1)
+      case Error(e) -> panic('list pinned failed: ${e}')
+    }
+
+    db2.close
+  })
+
+  t.test('import counts entries with missing content as failed', fn (t) {
+    let mut db = test_db('import_missing_content')
+    let path = '${test_tmp_dir}/missing_content.json'
+
+    match WriteOnlyFile.new(path.to_path) {
+      case Ok(f) -> {
+        let mut file = f
+
+        let _ = file.write(
+          '{"memories":[{"tags":"x"},{"content":"good"}]}'.to_byte_array,
+        )
+        let _ = file.flush
+      }
+      case Error(e) -> panic('write failed: ${e}')
+    }
+
+    match import_memories(db, path) {
+      case Ok(result) -> {
+        t.equal(result.imported, 1)
+        t.equal(result.failed, 1)
+        t.true(result.first_error.contains?('content'))
+      }
+      case Error(e) -> panic('import failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test(
+    'import reports deduplicated rows without inflating imported',
+    fn (t) {
+      let mut db = test_db('import_dedup_count')
+      let _ = add_memory(db, 'already here', 't', 'project', false)
+
+      let json = match export_memories(db) {
+        case Ok(j) -> j
+        case Error(e) -> panic('export failed: ${e}')
+      }
+
+      let path = '${test_tmp_dir}/dedup_export.json'
+
+      match WriteOnlyFile.new(path.to_path) {
+        case Ok(f) -> {
+          let mut file = f
+          let _ = file.write(json.to_byte_array)
+          let _ = file.flush
+        }
+        case Error(e) -> panic('write failed: ${e}')
+      }
+
+      match import_memories(db, path) {
+        case Ok(result) -> {
+          t.equal(result.imported, 0)
+          t.equal(result.deduplicated, 1)
+        }
+        case Error(e) -> panic('import failed: ${e}')
+      }
+
+      db.close
+    },
+  )
+
+  t.test(
+    'import allows filenames containing .. but rejects traversal',
+    fn (t) {
+      let mut db = test_db('import_path_validation')
+      let path = '${test_tmp_dir}/notes..json'
+
+      match WriteOnlyFile.new(path.to_path) {
+        case Ok(f) -> {
+          let mut file = f
+          let _ = file.write('{"memories":[{"content":"ok"}]}'.to_byte_array)
+          let _ = file.flush
+        }
+        case Error(e) -> panic('write failed: ${e}')
+      }
+
+      match import_memories(db, path) {
+        case Ok(result) -> t.equal(result.imported, 1)
+        case Error(e) -> panic('import of notes..json failed: ${e}')
+      }
+
+      match import_memories(db, '../escape.json') {
+        case Ok(_) -> t.true(false)
+        case Error(e) -> t.true(e.contains?('..'))
+      }
+
+      db.close
+    },
+  )
 
   t.test('import rejects nonexistent file', fn (t) {
     let mut db = test_db('import_missing')
@@ -978,6 +1135,148 @@ fn pub tests(t: mut Tests) {
         t.true(found)
       }
       case Error(e) -> panic('search failed: ${e}')
+    }
+
+    db.close
+  })
+
+  # --- regressions: update semantics and dedup after supersede ---
+
+  t.test('add re-allows content that was superseded', fn (t) {
+    let mut db = test_db('readd_superseded')
+
+    match add_memory(db, 'reusable content', '', 'project', false) {
+      case Ok(r1) -> {
+        match update_memory(db, r1.id, 'replacement content', '', '') {
+          case Ok(_) -> {
+            match add_memory(db, 'reusable content', '', 'project', false) {
+              case Ok(r2) -> t.false(r2.deduplicated)
+              case Error(e) -> panic('re-add after supersede failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('update failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('metadata-only update preserves content and id', fn (t) {
+    let mut db = test_db('meta_update')
+
+    match add_memory(db, 'stable content', '', 'project', false) {
+      case Ok(r) -> {
+        match update_memory(db, r.id, '', 'newtag', '') {
+          case Ok(new_id) -> {
+            t.equal(new_id, r.id)
+
+            match search_memories(db, 'stable content', '', 10) {
+              case Ok(mems) -> {
+                t.equal(mems.size, 1)
+
+                match mems.get(0) {
+                  case Ok(m) -> {
+                    t.equal(m.content, 'stable content')
+                    t.equal(m.tags, 'newtag')
+                  }
+                  case Error(_) -> {}
+                }
+              }
+              case Error(e) -> panic('search failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('metadata update failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('update preserves pinned status', fn (t) {
+    let mut db = test_db('update_pin')
+
+    match add_memory(db, 'pinned content', '', 'project', true) {
+      case Ok(r) -> {
+        match update_memory(db, r.id, 'pinned updated', '', '') {
+          case Ok(new_id) -> {
+            t.true(new_id != r.id)
+
+            match search_memories(db, 'pinned updated', '', 10) {
+              case Ok(mems) -> {
+                match mems.get(0) {
+                  case Ok(m) -> t.equal(m.status, 'pinned')
+                  case Error(_) -> {}
+                }
+              }
+              case Error(e) -> panic('search failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('update failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('maintain does not prune anti-patterns', fn (t) {
+    let mut db = test_db('maintain_anti')
+
+    match add_memory(db, 'harmful memory', '', 'project', false) {
+      case Ok(r) -> {
+        let _ = feedback_memory(db, r.id, 'harmful')
+        let _ = feedback_memory(db, r.id, 'harmful')
+        let _ = feedback_memory(db, r.id, 'harmful')
+
+        # Force it below the prune threshold: it must still survive because
+        # anti-patterns are protected (deletion requires explicit `forget`).
+        let _ = db.exec(
+          'UPDATE memories SET strength = 0.0, retrieval_strength = 0.0 WHERE id = ${r.id}',
+        )
+
+        match maintain_memory(db, false) {
+          case Ok(_) -> {
+            match get_stats(db) {
+              case Ok(stats) -> t.equal(stats.anti_pattern, 1)
+              case Error(e) -> panic('stats failed: ${e}')
+            }
+          }
+          case Error(e) -> panic('maintain failed: ${e}')
+        }
+      }
+      case Error(e) -> panic('add failed: ${e}')
+    }
+
+    db.close
+  })
+
+  t.test('new memories get the migrated storage_strength scale', fn (t) {
+    let mut db = test_db('storage_strength_scale')
+
+    match add_memory(db, 'scaled memory', '', 'project', false) {
+      case Ok(r) -> {
+        let mut stmt = match
+          db.prepare('SELECT storage_strength FROM memories WHERE id = ?')
+        {
+          case Ok(s) -> s
+          case Error(e) -> panic('prepare failed: ${e}')
+        }
+
+        let _ = stmt.bind_int(1, r.id)
+        let _ = stmt.step
+        let storage = stmt.column_double(0)
+
+        stmt.finalize
+
+        # 0-10 scale, matching the strength migration (strength * 10).
+        t.true((storage as Float) > 1.0)
+      }
+      case Error(e) -> panic('add failed: ${e}')
     }
 
     db.close
